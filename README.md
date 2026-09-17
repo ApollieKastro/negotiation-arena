@@ -22,37 +22,85 @@
 | Шаблоны | Tera |
 | БД | SQLite (rusqlite) |
 | Auth | Argon2 + JWT |
-| ИИ | Groq API (qwen3.8-27b) |
+| ИИ | Groq Cloud API |
 | TTS/STT | Silero TTS (опционально) |
+
+## Получение API-ключа Groq
+
+Проект использует **Groq Cloud API** для генерации ответов ИИ-собеседника. Модели хостятся на стороне Groq — скачивать ничего не нужно.
+
+### Используемая модель
+
+| Модель | Назначение | Скорость |
+|--------|-----------|----------|
+| `qwen/qwen3.8-27b` | Диалоги + генерация сценариев | ~150 t/s |
+
+### Пошаговая инструкция
+
+1. **Регистрация** на [console.groq.com](https://console.groq.com)
+   - Поддерживается вход через Google / GitHub / Email
+
+2. **Создание API-ключа**
+   - В консоли нажмите **API Keys** в левом меню
+   - Нажмите **Create API Key**
+   - Задайте имя (например `negotiation-arena`)
+   - Скопируйте ключ — он показывается только один раз
+
+3. **Лимиты бесплатного плана**
+   - 30 RPM (запросов в минуту)
+   - 14 400 токенов в минуту
+   - Для тренажёна более чем достаточно
+
+4. **Добавьте ключ в `.env`**
+   ```bash
+   cp .env.example .env
+   ```
+   Откройте `.env` и вставьте ключ:
+   ```
+   GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxxxxxx
+   ```
+
+> **Альтернатива:** если хотите использовать другого провайдера (OpenAI, Anthropic, Ollama локально) — потребуется изменить код в `engine.rs` и `main.rs` (替换 API calls).
 
 ## Быстрый старт
 
-### 1. Клонирование
+### 1. Требования
+
+- **Rust** 1.75+ ([rustup.rs](https://rustup.rs))
+- **API-ключ Groq** (см. раздел выше)
+
+### 2. Клонирование и запуск
 
 ```bash
-git clone https://github.com/username/negotiation-arena.git
+git clone https://github.com/ApollieKastro/negotiation-arena.git
 cd negotiation-arena
-```
 
-### 2. Настройка окружения
-
-```bash
+# Настройка окружения
 cp .env.example .env
-# Отредактируйте .env — вставьте ваш GROQ_API_KEY
-```
+# Вставьте ваш GROQ_API_KEY в .env
 
-### 3. Запуск
-
-```bash
+# Запуск
 cargo run
 ```
 
 Приложение будет доступно на `http://localhost:3001`.
 
-### 4. Вход
+### 3. Вход
 
 - **Логин:** `admin`
 - **Пароль:** `admin123` (или значение `ADMIN_PASSWORD` из .env)
+
+### 4. Опционально: TTS/STT
+
+Для голосового режима нужен работающий Silero TTS на порту 8080:
+
+```bash
+# Клонируйте и запустите Silero TTS отдельно
+git clone https://github.com/snakers4/silero-tts.git
+cd silero-tts
+pip install -r requirements.txt
+python server.py  # запустится на :8080
+```
 
 ## Структура проекта
 
