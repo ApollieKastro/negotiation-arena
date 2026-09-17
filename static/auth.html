@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-i18n="pageTitle">Авторизация</title>
+    <style>
+        :root {
+            --bg-main: #2B2B2B;
+            --bg-card: #242424;
+            --bg-input: #1A1A1A;
+            --accent: #5B5BFF;
+            --text-primary: #FFFFFF;
+            --text-secondary: #CCCCCC;
+            --btn-top-bg: #E0E0E0;
+            --btn-top-text: #000000;
+        }
+
+        .light-theme {
+            --bg-main: #F5F5F5;
+            --bg-card: #FFFFFF;
+            --bg-input: #E8E8E8;
+            --accent: #5B5BFF;
+            --text-primary: #1A1A1A;
+            --text-secondary: #666666;
+            --btn-top-bg: #2B2B2B;
+            --btn-top-text: #FFFFFF;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', 'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-main);
+            color: var(--text-primary);
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .app-window {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 20px;
+            flex-shrink: 0;
+        }
+
+        .top-btn {
+            background: var(--btn-top-bg);
+            color: var(--btn-top-text);
+            border: none;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .top-btn:hover { opacity: 0.85; }
+        .top-btn:active { opacity: 0.7; }
+
+        .center-area {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .auth-card {
+            background: var(--bg-card);
+            border-radius: 20px;
+            width: 500px;
+            padding: 32px 36px 36px;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 24px;
+            position: relative;
+        }
+
+        .tab {
+            font-size: 13px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding-bottom: 12px;
+            transition: color 0.2s, font-size 0.2s;
+            user-select: none;
+        }
+
+        .tab.active {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--accent);
+        }
+
+        .tabs-line {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .light-theme .tabs-line {
+            background: rgba(0, 0, 0, 0.1);
+        }
+
+        .tabs-indicator {
+            position: absolute;
+            bottom: 0;
+            height: 3px;
+            background: var(--accent);
+            border-radius: 2px 2px 0 0;
+            transition: left 0.25s ease, width 0.25s ease;
+        }
+
+        .auth-form {
+            margin-top: 28px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        .input-field {
+            width: 100%;
+            background: var(--bg-input);
+            border: none;
+            border-radius: 12px;
+            padding: 14px 16px;
+            font-size: 14px;
+            color: var(--text-primary);
+            outline: none;
+            transition: box-shadow 0.2s;
+        }
+
+        .input-field::placeholder {
+            color: var(--text-primary);
+            opacity: 0.7;
+        }
+
+        .input-field:focus {
+            box-shadow: 0 0 0 2px var(--accent);
+        }
+
+        .input-row {
+            display: flex;
+            gap: 14px;
+        }
+
+        .input-row .input-field { flex: 3; }
+
+        .action-btn {
+            flex: 2;
+            background: var(--bg-input);
+            border: none;
+            border-radius: 12px;
+            padding: 14px 12px;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-primary);
+            cursor: pointer;
+            text-align: center;
+            line-height: 1.3;
+            transition: opacity 0.2s;
+        }
+
+        .action-btn:hover { opacity: 0.85; }
+        .action-btn:active { opacity: 0.7; }
+        .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .bottom-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 20px;
+            flex-shrink: 0;
+        }
+
+        .footer-text {
+            font-size: 13px;
+            color: var(--text-primary);
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .footer-text:hover { opacity: 0.8; }
+
+        .arrow { font-size: 10px; opacity: 0.7; }
+
+        .lang-dropdown { position: relative; }
+
+        .lang-menu {
+            position: absolute;
+            bottom: 100%;
+            right: 0;
+            margin-bottom: 8px;
+            background: var(--bg-card);
+            border-radius: 10px;
+            padding: 6px 0;
+            min-width: 140px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+            display: none;
+            z-index: 100;
+        }
+
+        .lang-menu.show { display: block; }
+
+        .lang-option {
+            padding: 8px 16px;
+            font-size: 13px;
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .lang-option:hover { background: var(--bg-input); }
+
+        .lang-option.active {
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        .error-msg {
+            color: #ff6b6b;
+            font-size: 12px;
+            margin-top: 4px;
+            display: none;
+        }
+
+        .error-msg.show { display: block; }
+
+        .theme-menu {
+            position: absolute;
+            bottom: 100%;
+            left: 0;
+            margin-bottom: 8px;
+            background: var(--bg-card);
+            border-radius: 10px;
+            padding: 6px 0;
+            min-width: 120px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+            display: none;
+            z-index: 100;
+        }
+
+        .theme-menu.show { display: block; }
+
+        .theme-option {
+            padding: 8px 16px;
+            font-size: 13px;
+            color: var(--text-primary);
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .theme-option:hover { background: var(--bg-input); }
+
+        .theme-option.active {
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        .theme-wrapper { position: relative; }
+
+        /* Loading spinner */
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid var(--text-primary);
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 0.8s linear infinite;
+            vertical-align: middle;
+            margin-right: 6px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-window">
+        <header class="top-bar">
+            <button class="top-btn" id="logoBtn" data-i18n="logo">Лого</button>
+            <button class="top-btn" id="aboutBtn" data-i18n="about">О разработчиках</button>
+        </header>
+
+        <main class="center-area">
+            <div class="auth-card">
+                <div class="tabs" id="tabs">
+                    <span class="tab active" data-tab="register" data-i18n="tabRegister">Регистрация</span>
+                    <span class="tab" data-tab="login" data-i18n="tabLogin">Вход</span>
+                    <div class="tabs-line"></div>
+                    <div class="tabs-indicator" id="indicator"></div>
+                </div>
+
+                <form class="auth-form" id="authForm">
+                    <input type="text" class="input-field" id="loginInput" autocomplete="username" required />
+                    <div class="input-row">
+                        <input type="password" class="input-field" id="passwordInput" autocomplete="current-password" required />
+                        <button type="submit" class="action-btn" id="actionBtn"></button>
+                    </div>
+                    <div class="error-msg" id="errorMsg"></div>
+                </form>
+            </div>
+        </main>
+
+        <footer class="bottom-bar">
+            <div class="theme-wrapper">
+                <span class="footer-text" id="themeBtn" data-i18n="theme">Тема</span>
+                <div class="theme-menu" id="themeMenu">
+                    <div class="theme-option active" data-theme="dark" data-i18n="themeDark">Тёмная</div>
+                    <div class="theme-option" data-theme="light" data-i18n="themeLight">Светлая</div>
+                </div>
+            </div>
+            <div class="lang-dropdown">
+                <span class="footer-text" id="langBtn">
+                    Русский <span class="arrow">▼</span>
+                </span>
+                <div class="lang-menu" id="langMenu">
+                    <div class="lang-option active" data-lang="ru">Русский</div>
+                    <div class="lang-option" data-lang="en">English</div>
+                    <div class="lang-option" data-lang="kk">Қазақша</div>
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        // ─────────────────────────────────────────────────────────────
+        // i18n
+        // ─────────────────────────────────────────────────────────────
+        const i18n = {
+            ru: {
+                pageTitle: 'Авторизация',
+                logo: 'Лого',
+                about: 'О разработчиках',
+                tabRegister: 'Регистрация',
+                tabLogin: 'Вход',
+                loginPlaceholder: 'Логин',
+                passwordPlaceholder: 'Пароль',
+                registerBtn: 'Зарегистрироваться',
+                loginBtn: 'Войти',
+                errorEmpty: 'Заполните все поля',
+                errorShortPassword: 'Пароль слишком короткий',
+                errorInvalidLogin: 'Недопустимые символы в логине',
+                errorGeneric: 'Произошла ошибка',
+                errorNetwork: 'Ошибка сети',
+                errorWrongPassword: 'Неверный логин или пароль',
+                errorUserExists: 'Пользователь уже существует',
+                theme: 'Тема',
+                themeDark: 'Тёмная',
+                themeLight: 'Светлая',
+                langLabel: 'Русский',
+                aboutTitle: 'О разработчиках',
+                aboutText: 'Приложение для обучения переговорам',
+                loggingIn: 'Вход...',
+                registering: 'Регистрация...',
+            },
+            en: {
+                pageTitle: 'Authorization',
+                logo: 'Logo',
+                about: 'About Developers',
+                tabRegister: 'Sign Up',
+                tabLogin: 'Sign In',
+                loginPlaceholder: 'Login',
+                passwordPlaceholder: 'Password',
+                registerBtn: 'Sign Up',
+                loginBtn: 'Sign In',
+                errorEmpty: 'Fill in all fields',
+                errorShortPassword: 'Password is too short',
+                errorInvalidLogin: 'Invalid characters in login',
+                errorGeneric: 'An error occurred',
+                errorNetwork: 'Network error',
+                errorWrongPassword: 'Wrong login or password',
+                errorUserExists: 'User already exists',
+                theme: 'Theme',
+                themeDark: 'Dark',
+                themeLight: 'Light',
+                langLabel: 'English',
+                aboutTitle: 'About Developers',
+                aboutText: 'A negotiation training application',
+                loggingIn: 'Signing in...',
+                registering: 'Signing up...',
+            },
+            kk: {
+                pageTitle: 'Авторизация',
+                logo: 'Лого',
+                about: 'Әзірлеушілер туралы',
+                tabRegister: 'Тіркелу',
+                tabLogin: 'Кіру',
+                loginPlaceholder: 'Логин',
+                passwordPlaceholder: 'Құпия сөз',
+                registerBtn: 'Тіркелу',
+                loginBtn: 'Кіру',
+                errorEmpty: 'Барлық өрістерді толтырыңыз',
+                errorShortPassword: 'Құпия сөз тым қысқа',
+                errorInvalidLogin: 'Логинде жарамсыз таңбалар',
+                errorGeneric: 'Қате орын алды',
+                errorNetwork: 'Желі қатесі',
+                errorWrongPassword: 'Қате логин немесе құпия сөз',
+                errorUserExists: 'Пайдаланушы бұрыннан бар',
+                theme: 'Тақырып',
+                themeDark: 'Қараңғы',
+                themeLight: 'Жарық',
+                langLabel: 'Қазақша',
+                aboutTitle: 'Әзірлеушілер туралы',
+                aboutText: 'Келіссөздер үшін оқыту қолданбасы',
+                loggingIn: 'Кіруде...',
+                registering: 'Тіркелуде...',
+            },
+        };
+
+        // ─────────────────────────────────────────────────────────────
+        // State
+        // ─────────────────────────────────────────────────────────────
+        let currentTab = 'register';
+        let currentLang = 'ru';
+
+        // ─────────────────────────────────────────────────────────────
+        // Проверка: если уже авторизован — редирект
+        // ─────────────────────────────────────────────────────────────
+        (function checkAuth() {
+            const token = getCookie('token');
+            const role = getCookie('role');
+            if (token) {
+                if (role === 'admin') {
+                    window.location.href = '/admin';
+                } else {
+                    window.location.href = '/dashboard';
+                }
+            }
+        })();
+
+        function getCookie(name) {
+            const match = document.cookie.split(';').find(c => c.trim().startsWith(name + '='));
+            return match ? match.trim().split('=')[1] : null;
+        }
+
+        function setCookie(name, value, days = 1) {
+            const expires = new Date(Date.now() + days * 864e5).toUTCString();
+            document.cookie = `${name}=${value}; expires=${expires}; path=/`;
+        }
+
+        // ─────────────────────────────────────────────────────────────
+        // i18n: Apply
+        // ─────────────────────────────────────────────────────────────
+        function applyTranslation(lang) {
+            const t = i18n[lang];
+            if (!t) return;
+
+            document.title = t.pageTitle;
+
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                if (t[key]) el.textContent = t[key];
+            });
+
+            document.getElementById('loginInput').placeholder = t.loginPlaceholder;
+            document.getElementById('passwordInput').placeholder = t.passwordPlaceholder;
+
+            const actionBtn = document.getElementById('actionBtn');
+            if (!actionBtn.dataset.loading) {
+                actionBtn.textContent = currentTab === 'register' ? t.registerBtn : t.loginBtn;
+            }
+
+            document.getElementById('langBtn').innerHTML = `${t.langLabel} <span class="arrow">▼</span>`;
+        }
+
+        // ─────────────────────────────────────────────────────────────
+        // Tab Switching
+        // ─────────────────────────────────────────────────────────────
+        const tabs = document.querySelectorAll('.tab');
+        const indicator = document.getElementById('indicator');
+
+        function updateIndicator() {
+            const activeTab = document.querySelector('.tab.active');
+            if (!activeTab) return;
+            const rect = activeTab.getBoundingClientRect();
+            const parentRect = activeTab.parentElement.getBoundingClientRect();
+            indicator.style.left = (rect.left - parentRect.left) + 'px';
+            indicator.style.width = rect.width + 'px';
+        }
+
+        function switchTab(tab) {
+            currentTab = tab;
+            tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+            updateIndicator();
+            applyTranslation(currentLang);
+        }
+
+        tabs.forEach(tab => {
+            tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+        });
+
+        // ─────────────────────────────────────────────────────────────
+        // Form Submit
+        // ─────────────────────────────────────────────────────────────
+        const authForm = document.getElementById('authForm');
+        const errorMsg = document.getElementById('errorMsg');
+        const actionBtn = document.getElementById('actionBtn');
+
+        authForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            errorMsg.classList.remove('show');
+
+            const t = i18n[currentLang];
+            const login = document.getElementById('loginInput').value.trim();
+            const password = document.getElementById('passwordInput').value;
+
+            if (!login || !password) {
+                showError(t.errorEmpty);
+                return;
+            }
+
+            if (login.length < 3) {
+                showError(t.errorInvalidLogin);
+                return;
+            }
+
+            if (password.length < 6) {
+                showError(t.errorShortPassword);
+                return;
+            }
+
+            // Показать загрузку
+            setLoading(true);
+
+            try {
+                const endpoint = currentTab === 'register' ? '/api/register' : '/api/login';
+                const resp = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ login, password }),
+                });
+
+                const data = await resp.json();
+
+                if (data.success && data.token) {
+                    // Сохраняем токен и роль
+                    setCookie('token', data.token);
+                    setCookie('role', data.user?.role || 'user');
+                    setCookie('userId', data.user?.id || '');
+
+                    // Редирект по роли
+                    if (data.user?.role === 'admin') {
+                        window.location.href = '/admin';
+                    } else {
+                        window.location.href = '/dashboard';
+                    }
+                } else {
+                    // Ошибка
+                    const msg = data.message || t.errorGeneric;
+                    if (msg.includes('не найден') || msg.includes('not found') || msg.includes('Неверный')) {
+                        showError(t.errorWrongPassword);
+                    } else if (msg.includes('существует') || msg.includes('already')) {
+                        showError(t.errorUserExists);
+                    } else {
+                        showError(msg);
+                    }
+                    setLoading(false);
+                }
+            } catch (err) {
+                setLoading(false);
+                if (err.message.includes('Failed to fetch') || err.message.includes('NetworkError')) {
+                    showError(t.errorNetwork);
+                } else {
+                    showError(t.errorGeneric + ': ' + err.message);
+                }
+            }
+        });
+
+        function showError(msg) {
+            errorMsg.textContent = msg;
+            errorMsg.classList.add('show');
+        }
+
+        function setLoading(loading) {
+            const t = i18n[currentLang];
+            if (loading) {
+                actionBtn.dataset.loading = 'true';
+                actionBtn.disabled = true;
+                actionBtn.innerHTML = `<span class="spinner"></span>${currentTab === 'register' ? t.registering : t.loggingIn}`;
+            } else {
+                delete actionBtn.dataset.loading;
+                actionBtn.disabled = false;
+                actionBtn.textContent = currentTab === 'register' ? t.registerBtn : t.loginBtn;
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────
+        // Theme Toggle
+        // ─────────────────────────────────────────────────────────────
+        const themeBtn = document.getElementById('themeBtn');
+        const themeMenu = document.getElementById('themeMenu');
+        const themeOptions = document.querySelectorAll('.theme-option');
+        let isDark = true;
+
+        themeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            themeMenu.classList.toggle('show');
+        });
+
+        themeOptions.forEach(opt => {
+            opt.addEventListener('click', () => {
+                isDark = opt.dataset.theme === 'dark';
+                document.body.classList.toggle('light-theme', !isDark);
+                themeOptions.forEach(o => o.classList.remove('active'));
+                opt.classList.add('active');
+                themeMenu.classList.remove('show');
+                updateIndicator();
+            });
+        });
+
+        // ─────────────────────────────────────────────────────────────
+        // Language Dropdown
+        // ─────────────────────────────────────────────────────────────
+        const langBtn = document.getElementById('langBtn');
+        const langMenu = document.getElementById('langMenu');
+        const langOptions = document.querySelectorAll('.lang-option');
+
+        langBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            langMenu.classList.toggle('show');
+        });
+
+        langOptions.forEach(opt => {
+            opt.addEventListener('click', () => {
+                currentLang = opt.dataset.lang;
+                langOptions.forEach(o => o.classList.remove('active'));
+                opt.classList.add('active');
+                langMenu.classList.remove('show');
+                applyTranslation(currentLang);
+                switchTab(currentTab);
+            });
+        });
+
+        document.addEventListener('click', () => {
+            langMenu.classList.remove('show');
+            themeMenu.classList.remove('show');
+        });
+
+        // ─────────────────────────────────────────────────────────────
+        // Header Buttons
+        // ─────────────────────────────────────────────────────────────
+        document.getElementById('logoBtn').addEventListener('click', () => {
+            window.location.href = '/';
+        });
+
+        document.getElementById('aboutBtn').addEventListener('click', () => {
+            const t = i18n[currentLang];
+            alert(`${t.aboutTitle}\n\n${t.aboutText}`);
+        });
+
+        // ─────────────────────────────────────────────────────────────
+        // Init
+        // ─────────────────────────────────────────────────────────────
+        window.addEventListener('load', () => {
+            applyTranslation(currentLang);
+            switchTab('register');
+        });
+
+        window.addEventListener('resize', updateIndicator);
+    </script>
+</body>
+</html>

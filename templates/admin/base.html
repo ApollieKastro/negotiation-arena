@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Админ-панель{% endblock %}</title>
+    <style>
+        :root {
+            --bg-main: #1a1a2e;
+            --bg-card: #16213e;
+            --bg-input: #0f3460;
+            --accent: #5B5BFF;
+            --accent-hover: #4a4ae6;
+            --green: #00b894;
+            --red: #e17055;
+            --orange: #fdcb6e;
+            --text: #ffffff;
+            --text-dim: #a0a0b0;
+            --border: #2a2a4a;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: var(--bg-main);
+            color: var(--text);
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 240px;
+            background: var(--bg-card);
+            padding: 20px 0;
+            display: flex;
+            flex-direction: column;
+            position: fixed;
+            height: 100vh;
+        }
+
+        .sidebar-logo {
+            padding: 0 20px 20px;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 10px;
+        }
+
+        .sidebar-logo h2 {
+            font-size: 1.1em;
+            color: var(--accent);
+        }
+
+        .sidebar-logo small {
+            color: var(--text-dim);
+            font-size: 0.75em;
+        }
+
+        .nav-item {
+            padding: 12px 20px;
+            color: var(--text-dim);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: all 0.2s;
+        }
+
+        .nav-item:hover {
+            background: var(--bg-input);
+            color: var(--text);
+        }
+
+        .nav-item.active {
+            background: var(--accent);
+            color: white;
+        }
+
+        .nav-item .icon {
+            width: 20px;
+            text-align: center;
+        }
+
+        /* Main */
+        .main {
+            flex: 1;
+            margin-left: 240px;
+            padding: 30px;
+        }
+
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+
+        .page-header h1 {
+            font-size: 1.5em;
+        }
+
+        /* Cards */
+        .card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+
+        .card h3 {
+            margin-bottom: 16px;
+            color: var(--text-dim);
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2em;
+            font-weight: 700;
+            color: var(--accent);
+        }
+
+        .stat-label {
+            color: var(--text-dim);
+            margin-top: 5px;
+        }
+
+        /* Table */
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .data-table th,
+        .data-table td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .data-table th {
+            color: var(--text-dim);
+            font-weight: 500;
+        }
+
+        .data-table tr:hover {
+            background: rgba(91, 91, 255, 0.05);
+        }
+
+        /* Forms */
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 6px;
+            color: var(--text-dim);
+            font-size: 0.9em;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 10px 14px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            font-size: 0.95em;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        textarea.form-input {
+            min-height: 100px;
+            resize: vertical;
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover { background: var(--accent-hover); }
+
+        .btn-danger {
+            background: var(--red);
+            color: white;
+        }
+
+        .btn-danger:hover { opacity: 0.85; }
+
+        .btn-sm {
+            padding: 5px 10px;
+            font-size: 0.8em;
+        }
+
+        /* Badges */
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.75em;
+            font-weight: 500;
+        }
+
+        .badge-admin { background: rgba(91, 91, 255, 0.2); color: var(--accent); }
+        .badge-user { background: rgba(0, 184, 148, 0.2); color: var(--green); }
+        .badge-active { background: rgba(0, 184, 148, 0.2); color: var(--green); }
+        .badge-inactive { background: rgba(225, 112, 85, 0.2); color: var(--red); }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.6);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal-overlay.show { display: flex; }
+
+        .modal {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 30px;
+            width: 500px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal h2 {
+            margin-bottom: 20px;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 20px;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .sidebar { width: 60px; }
+            .sidebar-logo h2, .sidebar-logo small, .nav-item span { display: none; }
+            .main { margin-left: 60px; }
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
+</head>
+<body>
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-logo">
+            <h2>⚙️ Админ</h2>
+            <small>Арена переговоров</small>
+        </div>
+        <a href="/admin" class="nav-item {% block navDashboard %}{% endblock %}">
+            <span class="icon">📊</span>
+            <span>Дашборд</span>
+        </a>
+        <a href="/admin/scenarios" class="nav-item {% block navScenarios %}{% endblock %}">
+            <span class="icon">📋</span>
+            <span>Сценарии</span>
+        </a>
+        <a href="/admin/users" class="nav-item {% block navUsers %}{% endblock %}">
+            <span class="icon">👥</span>
+            <span>Пользователи</span>
+        </a>
+        <a href="/admin/settings" class="nav-item {% block navSettings %}{% endblock %}">
+            <span class="icon">⚙️</span>
+            <span>Настройки</span>
+        </a>
+        <a href="/" class="nav-item" style="margin-top: auto;">
+            <span class="icon">🏠</span>
+            <span>На сайт</span>
+        </a>
+        <a href="#" class="nav-item" onclick="logout(); return false;" style="border-top: 1px solid var(--border); margin-top: 10px; padding-top: 15px;">
+            <span class="icon">🚪</span>
+            <span>Выйти</span>
+        </a>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+        {% block content %}{% endblock %}
+    </main>
+
+    <script>
+        // Токен из cookie
+        function getCookie(name) {
+            const match = document.cookie.split(';').find(c => c.trim().startsWith(name + '='));
+            return match ? match.trim().split('=')[1] : null;
+        }
+
+        function getToken() {
+            return getCookie('token') || '';
+        }
+
+        // Выход из аккаунта
+        function logout() {
+            document.cookie = 'token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+            document.cookie = 'role=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+            document.cookie = 'userId=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+            window.location.href = '/auth';
+        }
+
+        // API запросы
+        async function apiRequest(url, method = 'GET', body = null) {
+            const opts = {
+                method,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${getToken()}`
+                }
+            };
+            if (body) opts.body = JSON.stringify(body);
+            const resp = await fetch(url, opts);
+            if (resp.status === 401) {
+                window.location.href = '/auth';
+                return null;
+            }
+            return resp.json();
+        }
+
+        // Уведомление
+        function showNotification(msg, type = 'success') {
+            const div = document.createElement('div');
+            div.style.cssText = `
+                position: fixed; top: 20px; right: 20px; z-index: 9999;
+                padding: 12px 20px; border-radius: 8px; color: white;
+                background: ${type === 'success' ? '#00b894' : '#e17055'};
+                animation: slideIn 0.3s ease;
+            `;
+            div.textContent = msg;
+            document.body.appendChild(div);
+            setTimeout(() => div.remove(), 3000);
+        }
+
+        // Проверка авторизации при загрузке страницы
+        (function checkAuth() {
+            const token = getCookie('token');
+            const role = getCookie('role');
+            if (!token) {
+                window.location.href = '/auth';
+                return;
+            }
+            if (role !== 'admin') {
+                window.location.href = '/dashboard';
+                return;
+            }
+        })();
+    </script>
+</body>
+</html>

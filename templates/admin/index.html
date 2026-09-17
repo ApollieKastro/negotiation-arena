@@ -1,0 +1,43 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Дашборд — Админ{% endblock %}
+{% block navDashboard %}active{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>📊 Дашборд</h1>
+</div>
+
+    <div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-value" id="usersCount">{{ users_count }}</div>
+        <div class="stat-label">Пользователей</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="scenariosCount">{{ scenarios_count }}</div>
+        <div class="stat-label">Сценариев</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="activeScenarios">{{ active_scenarios }}</div>
+        <div class="stat-label">Активных</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value" id="sessionsCount">0</div>
+        <div class="stat-label">Сессий сегодня</div>
+    </div>
+</div>
+
+<div class="card">
+    <h3>Быстрые действия</h3>
+    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+        <a href="/admin/scenarios" class="btn btn-primary">📋 Управление сценариями</a>
+        <a href="/admin/users" class="btn btn-primary">👥 Пользователи</a>
+        <a href="/admin/settings" class="btn btn-primary">⚙️ Настройки</a>
+    </div>
+</div>
+
+<div class="card">
+    <h3>Последние действия</h3>
+    <p style="color: var(--text-dim);">Пока нет действий</p>
+</div>
+{% endblock %}

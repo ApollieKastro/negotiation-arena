@@ -1,0 +1,200 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Сценарии — Админ{% endblock %}
+{% block navScenarios %}active{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>📋 Управление сценариями</h1>
+    <button class="btn btn-primary" onclick="openModal()">+ Добавить сценарий</button>
+</div>
+
+<div class="card">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Название</th>
+                <th>Сфера</th>
+                <th>Сложность</th>
+                <th>Партнёр</th>
+                <th>Статус</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in scenarios %}
+            <tr>
+                <td><strong>{{ s.title }}</strong></td>
+                <td>{{ s.sphere }}</td>
+                <td>{{ s.difficulty }}</td>
+                <td>{{ s.partner_name }}</td>
+                <td>
+                    {% if s.is_active %}
+                        <span class="badge badge-active">Активен</span>
+                    {% else %}
+                        <span class="badge badge-inactive">Неактивен</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <button class="btn btn-sm" onclick="editScenario('{{ s.id }}')">✏️</button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteScenario('{{ s.id }}')">🗑️</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Modal -->
+<div class="modal-overlay" id="modal">
+    <div class="modal">
+        <h2 id="modalTitle">Новый сценарий</h2>
+        <input type="hidden" id="scenarioId">
+
+        <div class="form-group">
+            <label>Название</label>
+            <input type="text" class="form-input" id="scenarioTitle">
+        </div>
+
+        <div class="form-group">
+            <label>Описание</label>
+            <textarea class="form-input" id="scenarioDesc"></textarea>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <div class="form-group">
+                <label>Сфера</label>
+                <input type="text" class="form-input" id="scenarioSphere" placeholder="Продажи, HR, Управление">
+            </div>
+            <div class="form-group">
+                <label>Сложность</label>
+                <select class="form-input" id="scenarioDifficulty">
+                    <option>Начальная</option>
+                    <option>Средняя</option>
+                    <option>Сложная</option>
+                </select>
+            </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <div class="form-group">
+                <label>Имя оппонента</label>
+                <input type="text" class="form-input" id="scenarioPartnerName">
+            </div>
+            <div class="form-group">
+                <label>Роль оппонента</label>
+                <input type="text" class="form-input" id="scenarioPartnerRole">
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>BATNA оппонента</label>
+            <input type="text" class="form-input" id="scenarioPartnerBatna">
+        </div>
+
+        <div class="form-group">
+            <label>BATNA игрока</label>
+            <input type="text" class="form-input" id="scenarioPlayerBatna">
+        </div>
+
+        <div class="form-group">
+            <label>Начальный контекст</label>
+            <textarea class="form-input" id="scenarioContext"></textarea>
+        </div>
+
+        <div class="form-group">
+            <label>Дерево диалога (JSON)</label>
+            <textarea class="form-input" id="scenarioTree" style="min-height: 150px; font-family: monospace;"></textarea>
+        </div>
+
+        <div class="form-group">
+            <label>Финалы (JSON)</label>
+            <textarea class="form-input" id="scenarioEndings" style="min-height: 80px; font-family: monospace;"></textarea>
+        </div>
+
+        <div class="form-group">
+            <label>
+                <input type="checkbox" id="scenarioActive" checked> Активен
+            </label>
+        </div>
+
+        <div class="modal-actions">
+            <button class="btn" onclick="closeModal()">Отмена</button>
+            <button class="btn btn-primary" onclick="saveScenario()">Сохранить</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    function openModal(scenario = null) {
+        document.getElementById('modal').classList.add('show');
+        if (scenario) {
+            document.getElementById('modalTitle').textContent = 'Редактировать сценарий';
+            document.getElementById('scenarioId').value = scenario.id;
+            document.getElementById('scenarioTitle').value = scenario.title;
+            document.getElementById('scenarioDesc').value = scenario.description;
+            document.getElementById('scenarioSphere').value = scenario.sphere;
+            document.getElementById('scenarioDifficulty').value = scenario.difficulty;
+            document.getElementById('scenarioPartnerName').value = scenario.partner_name;
+            document.getElementById('scenarioPartnerRole').value = scenario.partner_role;
+            document.getElementById('scenarioPartnerBatna').value = scenario.partner_batna;
+            document.getElementById('scenarioPlayerBatna').value = scenario.player_batna;
+            document.getElementById('scenarioContext').value = scenario.initial_context;
+            document.getElementById('scenarioTree').value = scenario.dialogue_tree;
+            document.getElementById('scenarioEndings').value = scenario.endings;
+            document.getElementById('scenarioActive').checked = scenario.is_active;
+        } else {
+            document.getElementById('modalTitle').textContent = 'Новый сценарий';
+            document.getElementById('scenarioId').value = '';
+        }
+    }
+
+    function closeModal() {
+        document.getElementById('modal').classList.remove('show');
+    }
+
+    async function saveScenario() {
+        const id = document.getElementById('scenarioId').value || undefined;
+        const data = {
+            id,
+            title: document.getElementById('scenarioTitle').value,
+            description: document.getElementById('scenarioDesc').value,
+            sphere: document.getElementById('scenarioSphere').value,
+            difficulty: document.getElementById('scenarioDifficulty').value,
+            partner_name: document.getElementById('scenarioPartnerName').value,
+            partner_role: document.getElementById('scenarioPartnerRole').value,
+            partner_goals: '[]',
+            initial_context: document.getElementById('scenarioContext').value,
+            dialogue_tree: document.getElementById('scenarioTree').value || '{}',
+            endings: document.getElementById('scenarioEndings').value || '[]',
+            partner_batna: document.getElementById('scenarioPartnerBatna').value,
+            player_batna: document.getElementById('scenarioPlayerBatna').value,
+            is_active: document.getElementById('scenarioActive').checked,
+        };
+
+        const resp = await apiRequest('/api/admin/scenarios', 'POST', data);
+        if (resp?.success) {
+            showNotification('Сценарий сохранён');
+            closeModal();
+            location.reload();
+        } else {
+            showNotification('Ошибка сохранения', 'error');
+        }
+    }
+
+    async function deleteScenario(id) {
+        if (!confirm('Удалить сценарий?')) return;
+        const resp = await apiRequest(`/api/admin/scenarios/${id}`, 'DELETE');
+        if (resp?.success) {
+            showNotification('Сценарий удалён');
+            location.reload();
+        }
+    }
+
+    async function editScenario(id) {
+        const resp = await apiRequest('/api/admin/scenarios');
+        const scenario = resp?.find(s => s.id === id);
+        if (scenario) openModal(scenario);
+    }
+</script>
+{% endblock %}
