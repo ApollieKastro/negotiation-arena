@@ -49,7 +49,7 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
     sales_tree.insert("s1_r2".to_string(), DialogueNode {
         id: "s1_r2".to_string(),
         speaker: "partner".to_string(),
-        text: "Хорошо, давайте обсудим объёмы. Какой минимальный заказ вы готовы guarantee при скидке?".to_string(),
+        text: "Хорошо, давайте обсудим объёмы. Какой минимальный заказ вы готовы гарантировать при скидке?".to_string(),
         responses: vec![
             ResponseOption {
                 id: "s1_r2a".to_string(),
@@ -62,7 +62,7 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
             },
             ResponseOption {
                 id: "s1_r2b".to_string(),
-                text: "500 штук — это наш стандарт. При这样的 объёме скидка 10% справедлива.".to_string(),
+                text: "500 штук — это наш стандарт. При таком объёме скидка 10% справедлива.".to_string(),
                 strategy: "Компромисс".to_string(),
                 spin_type: "".to_string(),
                 uses_objective_criteria: true,
@@ -89,7 +89,7 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
             },
             ResponseOption {
                 id: "s1_r2cb".to_string(),
-                text: "15% возможно при объёме от 2000 штук. Это我们的 стандартные условия для крупных клиентов.".to_string(),
+                text: "15% возможно при объёме от 2000 штук. Это наши стандартные условия для крупных клиентов.".to_string(),
                 strategy: "Компромисс".to_string(),
                 spin_type: "N".to_string(),
                 uses_objective_criteria: true,
@@ -116,7 +116,7 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
             },
             ResponseOption {
                 id: "s1_r2fb".to_string(),
-                text: "Хорошо, давайтеMeet halfway — 12% скидки и мы включим сервисное обслуживание.".to_string(),
+                text: "Хорошо, давайте договоримся — 12% скидки и мы включим сервисное обслуживание.".to_string(),
                 strategy: "Компромисс".to_string(),
                 spin_type: "".to_string(),
                 uses_objective_criteria: false,
@@ -134,7 +134,7 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
         responses: vec![
             ResponseOption {
                 id: "s1_r3a".to_string(),
-                text: "Поставка — 2 недели, гарантия 24 месяца. Это стандарт для我们的 клиентов. Как эти условия повлияют на ваш выбор?".to_string(),
+                text: "Поставка — 2 недели, гарантия 24 месяца. Это стандарт для наших клиентов. Как эти условия повлияют на ваш выбор?".to_string(),
                 strategy: "Сотрудничество".to_string(),
                 spin_type: "N".to_string(),
                 uses_objective_criteria: true,
@@ -226,7 +226,7 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
         initial_context: "Вы — менеджер по продажам. Клиент — крупная оптовая компания, заинтересованная в вашем продукте, но считает цену завышенной. Ваш BATNA: найти другого клиента на аналогичный объём. BATNA клиента: обратиться к конкурентам.".to_string(),
         dialogue_tree: sales_tree,
         endings: vec![
-            Ending { id: "win".to_string(), title: "Отличный результат".to_string(), text: "Вы нашли общее язык с клиентом и заключили выгодную сделку!".to_string(), outcome: "Клиент签署 контракт на выгодных условиях".to_string(), min_score: 50 },
+            Ending { id: "win".to_string(), title: "Отличный результат".to_string(), text: "Вы нашли общее язык с клиентом и заключили выгодную сделку!".to_string(), outcome: "Клиент подписал контракт на выгодных условиях".to_string(), min_score: 50 },
             Ending { id: "partial".to_string(), title: "Частичный успех".to_string(), text: "Переговоры завершились, но не все цели достигнуты.".to_string(), outcome: "Клиент уходит, но оставляет заявку".to_string(), min_score: 20 },
             Ending { id: "fail".to_string(), title: "Неудача".to_string(), text: "Не удалось найти компромисс.".to_string(), outcome: "Клиент уходит к конкурентам".to_string(), min_score: 0 },
         ],
@@ -355,7 +355,7 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
         initial_context: "Вы — кандидат на должность руководителя IT-отдела. BATNA: оставаться на текущей позиции или принять предложение от другой компании. BATNA компании: найти кандидата изнутри или через рекрутинговое агентство.".to_string(),
         dialogue_tree: hr_tree,
         endings: vec![
-            Ending { id: "hire".to_string(), title: "Оффер получен".to_string(), text: "Вас рекомендуют на должность!".to_string(), outcome: "Оффер с期望 зарплатой".to_string(), min_score: 45 },
+            Ending { id: "hire".to_string(), title: "Оффер получен".to_string(), text: "Вас рекомендуют на должность!".to_string(), outcome: "Оффер с ожидаемой зарплатой".to_string(), min_score: 45 },
             Ending { id: "wait".to_string(), title: "Лист ожидания".to_string(), text: "Решение отложено — сравнивают с другими кандидатами.".to_string(), outcome: "Звонок через неделю".to_string(), min_score: 20 },
             Ending { id: "reject".to_string(), title: "Отказ".to_string(), text: "К сожалению, вы не подходите.".to_string(), outcome: "Письмо с отказом".to_string(), min_score: 0 },
         ],
@@ -395,11 +395,11 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
     renewal_tree.insert("r_r2".to_string(), DialogueNode {
         id: "r_r2".to_string(),
         speaker: "partner".to_string(),
-        text: "Нам важно стабильность. Как рост цен повлияет на我们的 бюджет?".to_string(),
+        text: "Нам важно стабильность. Как рост цен повлияет на наш бюджет?".to_string(),
         responses: vec![
             ResponseOption {
                 id: "r_r2a".to_string(),
-                text: "Понимаю. Какой процент бюджета выделяется на我们的 услугу? Если рост критичен, давайте найдём решение.".to_string(),
+                text: "Понимаю. Какой процент бюджета выделяется на нашу услугу? Если рост критичен, давайте найдём решение.".to_string(),
                 strategy: "Сотрудничество".to_string(),
                 spin_type: "I".to_string(),
                 uses_objective_criteria: false,
@@ -456,7 +456,7 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
             },
             ResponseOption {
                 id: "p1_comp".to_string(),
-                text: "Мы готовы пересмотреть цены на 10%. Это我们的 максимальная скидка.".to_string(),
+                text: "Мы готовы пересмотреть цены на 10%. Это наша максимальная скидка.".to_string(),
                 strategy: "Компромисс".to_string(),
                 spin_type: "".to_string(),
                 uses_objective_criteria: true,
@@ -549,7 +549,7 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
             },
             ResponseOption {
                 id: "pp1_comp".to_string(),
-                text: "Эксклюзивность возможна при минимальном объёме закупок. Какой минимум вы готовы guarantee?".to_string(),
+                text: "Эксклюзивность возможна при минимальном объёме закупок. Какой минимум вы готовы гарантировать?".to_string(),
                 strategy: "Компромисс".to_string(),
                 spin_type: "".to_string(),
                 uses_objective_criteria: true,
@@ -563,7 +563,7 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
     partnership_tree.insert("pp_r2".to_string(), DialogueNode {
         id: "pp_r2".to_string(),
         speaker: "partner".to_string(),
-        text: "Мы готовы guarantee объём от 5000 штук в год. Как это соотносится с вашими планами?".to_string(),
+        text: "Мы готовы гарантировать объём от 5000 штук в год. Как это соотносится с вашими планами?".to_string(),
         responses: vec![
             ResponseOption {
                 id: "pp_r2a".to_string(),
@@ -603,7 +603,7 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
         responses: vec![
             ResponseOption {
                 id: "pp_r3a".to_string(),
-                text: "Давайте построимroadmap. Через год — выход на 80% региона, через 3 года — полное покрытие. Какие цели ставите вы?".to_string(),
+                text: "Давайте построим дорожную карту. Через год — выход на 80% региона, через 3 года — полное покрытие. Какие цели ставите вы?".to_string(),
                 strategy: "Сотрудничество".to_string(),
                 spin_type: "N".to_string(),
                 uses_objective_criteria: false,

@@ -225,6 +225,46 @@ impl Store {
             )?;
         }
 
+        // Seed сценариев из engine.rs (вызываем вне lock)
+        drop(conn);
+        self.seed_scenarios()?;
+
+        Ok(())
+    }
+
+    /// Вставка 6 сценариев по умолчанию (если таблица пуста)
+    fn seed_scenarios(&self) -> Result<()> {
+        let conn = self.conn.lock();
+        let count: i32 = conn.query_row(
+            "SELECT COUNT(*) FROM scenarios", [], |row| row.get(0)
+        )?;
+        if count > 0 {
+            return Ok(()); // уже есть
+        }
+
+        let scenarios = crate::engine::load_scenarios();
+        let now = Utc::now().to_rfc3339();
+
+        for (_id, s) in &scenarios {
+            let goals_json = serde_json::to_string(&s.partner_goals).unwrap_or_else(|_| "[]".to_string());
+            let tree_json = serde_json::to_string(&s.dialogue_tree).unwrap_or_else(|_| "{}".to_string());
+            let endings_json = serde_json::to_string(&s.endings).unwrap_or_else(|_| "[]".to_string());
+
+            conn.execute(
+                "INSERT INTO scenarios (id, title, description, sphere, difficulty, partner_name,
+                    partner_role, partner_goals, initial_context, dialogue_tree, endings,
+                    partner_batna, player_batna, is_active, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                params![
+                    s.id, s.title, s.description, s.sphere, s.difficulty,
+                    s.partner_name, s.partner_role, goals_json, s.initial_context,
+                    tree_json, endings_json, s.partner_batna, s.player_batna,
+                    true as i32, now
+                ],
+            )?;
+        }
+
+        eprintln!("✅ Seeded {} scenarios into database", scenarios.len());
         Ok(())
     }
 
@@ -377,6 +417,47 @@ impl Store {
         let conn = self.conn.lock();
         conn.execute("DELETE FROM scenarios WHERE id = ?1", params![id])?;
         Ok(())
+    }
+
+    /// Получить сценарий из БД и конвертировать в модель engine
+    pub fn get_scenario_as_model(&self, id: &str) -> Option<crate::models::Scenario> {
+        let row = self._get_scenario(id).ok()??;
+        self.row_to_scenario(&row).ok()
+    }
+
+    /// Конвертация ScenarioRow -> Scenario
+    fn row_to_scenario(&self, row: &ScenarioRow) -> Result<crate::models::Scenario> {
+        let dialogue_tree: std::collections::HashMap<String, crate::models::DialogueNode> =
+            serde_json::from_str(&row.dialogue_tree).unwrap_or_default();
+        let endings: Vec<crate::models::Ending> =
+            serde_json::from_str(&row.endings).unwrap_or_default();
+        let partner_goals: Vec<String> =
+            serde_json::from_str(&row.partner_goals).unwrap_or_default();
+
+        Ok(crate::models::Scenario {
+            id: row.id.clone(),
+            title: row.title.clone(),
+            description: row.description.clone(),
+            sphere: row.sphere.clone(),
+            difficulty: row.difficulty.clone(),
+            partner_name: row.partner_name.clone(),
+            partner_role: row.partner_role.clone(),
+            partner_goals,
+            initial_context: row.initial_context.clone(),
+            dialogue_tree,
+            endings,
+            partner_batna: row.partner_batna.clone(),
+            player_batna: row.player_batna.clone(),
+        })
+    }
+
+    /// Все активные сценарии как модели
+    pub fn list_scenarios_as_models(&self) -> Vec<crate::models::Scenario> {
+        let rows = self.list_scenarios().unwrap_or_default();
+        rows.iter()
+            .filter(|r| r.is_active)
+            .filter_map(|r| self.row_to_scenario(r).ok())
+            .collect()
     }
 
     // ──────────── Roles ────────────

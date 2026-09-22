@@ -114,13 +114,19 @@ async fn main() {
 
     tracing_subscriber::fmt::init();
 
+    eprintln!("Initializing database...");
+
     // Инициализация БД
+    eprintln!("Connecting to SQLite...");
     let store = Store::new("negotiation_arena.db")
         .expect("Failed to initialize database");
+    eprintln!("Database initialized.");
 
+    eprintln!("Loading Tera templates...");
     let tera = Arc::new(
         Tera::new("templates/**/*").expect("Failed to initialize Tera templates")
     );
+    eprintln!("Templates loaded.");
 
     let state = AppState {
         tera,
@@ -183,7 +189,7 @@ async fn main() {
         .with_state(state);
 
     let addr = "0.0.0.0:3001";
-    println!("🚀 Server running at http://{}", addr);
+    eprintln!("🚀 Server running at http://{}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
@@ -574,8 +580,8 @@ async fn start_negotiation(
     State(state): State<AppState>,
     Json(config): Json<NegotiationConfig>,
 ) -> Result<Json<StartResponse>, StatusCode> {
-    let all_scenarios = load_scenarios();
-    let scenario = all_scenarios.get(&config.scenario_id)
+    // Загружаем сценарий из БД
+    let scenario = state.store.get_scenario_as_model(&config.scenario_id)
         .ok_or(StatusCode::NOT_FOUND)?;
 
     let session_id = uuid::Uuid::new_v4().to_string();
@@ -870,8 +876,11 @@ async fn handle_stt(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-async fn list_scenarios() -> Json<Vec<Scenario>> {
-    Json(load_scenarios().into_values().collect())
+async fn list_scenarios(
+    State(state): State<AppState>,
+) -> Json<Vec<Scenario>> {
+    let models = state.store.list_scenarios_as_models();
+    Json(models)
 }
 
 // ─────────────────────────────────────────────────────────────
