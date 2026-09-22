@@ -1,23 +1,33 @@
 [package]
 name = "negotiation-arena"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
+description = "Тренажёр переговорных навыков с ИИ-собеседником"
 
 [dependencies]
+# ── Web ──
 axum = { version = "0.7", features = ["multipart"] }
+tower-http = { version = "0.5", features = ["fs", "cors", "trace"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tera = "1"
-uuid = { version = "1", features = ["v4"] }
-tower-http = { version = "0.5", features = ["fs", "cors"] }
 mime_guess = "2"
-reqwest = { version = "0.12", features = ["multipart", "json"] }
-base64 = "0.22"
-tracing = "0.1"
-tracing-subscriber = "0.3"
 
-# БД и Auth
+# ── Async / ошибки ──
+async-trait = "0.1"
+thiserror = "2"
+anyhow = "1"
+
+# ── HTTP клиент (провайдеры ИИ) ──
+reqwest = { version = "0.12", features = ["multipart", "json", "stream"] }
+base64 = "0.22"
+
+# ── Логирование ──
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# ── БД и Auth ──
 rusqlite = { version = "0.31", features = ["bundled"] }
 argon2 = "0.5"
 jsonwebtoken = "9"
@@ -25,3 +35,11 @@ chrono = { version = "0.4", features = ["serde"] }
 parking_lot = "0.12"
 rand = "0.8"
 dotenvy = "0.15"
+uuid = { version = "1", features = ["v4"] }
+
+# ── Шифрование секретов провайдеров ──
+aes-gcm = "0.10"
+
+[profile.release]
+lto = "thin"
+strip = true
