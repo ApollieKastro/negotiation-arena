@@ -5,6 +5,8 @@
 //! Бизнес-логика не знает, кто именно отвечает: Groq, OpenAI, Anthropic,
 //! Gemini или локальный whisper.
 
+pub mod providers;
 pub mod repositories;
 
+pub use providers::*;
 pub use repositories::*;

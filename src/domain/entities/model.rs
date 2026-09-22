@@ -62,6 +62,10 @@ pub enum ProviderKind {
     Anthropic,
     /// Google Gemini API.
     Gemini,
+    /// ElevenLabs (синтез речи).
+    ElevenLabs,
+    /// Deepgram (распознавание и синтез речи).
+    Deepgram,
     /// Локальный запуск через внешнюю команду/сервис (whisper.cpp, Piper и т.п.).
     Local,
 }
@@ -72,6 +76,8 @@ impl ProviderKind {
             "openai_compatible" => Some(ProviderKind::OpenAiCompatible),
             "anthropic" => Some(ProviderKind::Anthropic),
             "gemini" => Some(ProviderKind::Gemini),
+            "elevenlabs" => Some(ProviderKind::ElevenLabs),
+            "deepgram" => Some(ProviderKind::Deepgram),
             "local" => Some(ProviderKind::Local),
             _ => None,
         }
@@ -82,6 +88,8 @@ impl ProviderKind {
             ProviderKind::OpenAiCompatible => "openai_compatible",
             ProviderKind::Anthropic => "anthropic",
             ProviderKind::Gemini => "gemini",
+            ProviderKind::ElevenLabs => "elevenlabs",
+            ProviderKind::Deepgram => "deepgram",
             ProviderKind::Local => "local",
         }
     }
@@ -92,6 +100,8 @@ impl ProviderKind {
             ProviderKind::OpenAiCompatible,
             ProviderKind::Anthropic,
             ProviderKind::Gemini,
+            ProviderKind::ElevenLabs,
+            ProviderKind::Deepgram,
             ProviderKind::Local,
         ]
     }
@@ -101,6 +111,8 @@ impl ProviderKind {
             ProviderKind::OpenAiCompatible => "OpenAI-совместимый",
             ProviderKind::Anthropic => "Anthropic",
             ProviderKind::Gemini => "Google Gemini",
+            ProviderKind::ElevenLabs => "ElevenLabs",
+            ProviderKind::Deepgram => "Deepgram",
             ProviderKind::Local => "Локальный",
         }
     }
@@ -108,6 +120,33 @@ impl ProviderKind {
     /// API-ключ не нужен (локальные модели работают без ключа).
     pub fn requires_api_key(&self) -> bool {
         !matches!(self, ProviderKind::Local)
+    }
+
+    /// Провайдер умеет диалог (LLM-порт доступен).
+    pub fn supports_chat(&self) -> bool {
+        matches!(
+            self,
+            ProviderKind::OpenAiCompatible | ProviderKind::Anthropic | ProviderKind::Gemini
+        )
+    }
+
+    /// Провайдер умеет распознавание речи.
+    pub fn supports_stt(&self) -> bool {
+        matches!(
+            self,
+            ProviderKind::OpenAiCompatible | ProviderKind::Deepgram | ProviderKind::Local
+        )
+    }
+
+    /// Провайдер умеет синтез речи.
+    pub fn supports_tts(&self) -> bool {
+        matches!(
+            self,
+            ProviderKind::OpenAiCompatible
+                | ProviderKind::ElevenLabs
+                | ProviderKind::Deepgram
+                | ProviderKind::Local
+        )
     }
 }
 
@@ -126,4 +165,35 @@ pub struct ModelDescriptor {
     /// Дополнительные сведения: размер локальной модели, голоса, заметки.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_kind_roundtrips_through_str() {
+        for kind in ProviderKind::all() {
+            let parsed = ProviderKind::from_str(kind.as_str())
+                .unwrap_or_else(|| panic!("не распознан вид {:?}", kind.as_str()));
+            assert_eq!(parsed, *kind);
+        }
+        assert!(ProviderKind::from_str("unknown").is_none());
+    }
+
+    #[test]
+    fn capability_matrix_matches_stage_2() {
+        assert!(ProviderKind::OpenAiCompatible.supports_chat());
+        assert!(ProviderKind::OpenAiCompatible.supports_stt());
+        assert!(ProviderKind::OpenAiCompatible.supports_tts());
+        assert!(ProviderKind::Anthropic.supports_chat());
+        assert!(!ProviderKind::Anthropic.supports_stt());
+        assert!(!ProviderKind::Anthropic.supports_tts());
+        assert!(ProviderKind::Gemini.supports_chat());
+        assert!(!ProviderKind::ElevenLabs.supports_chat());
+        assert!(ProviderKind::ElevenLabs.supports_tts());
+        assert!(ProviderKind::Deepgram.supports_stt());
+        assert!(ProviderKind::Deepgram.supports_tts());
+        assert!(!ProviderKind::Local.requires_api_key());
+    }
 }
