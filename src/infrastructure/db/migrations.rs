@@ -40,6 +40,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "sessions",
         sql: include_str!("migrations/0005_sessions.sql"),
     },
+    Migration {
+        version: 6,
+        name: "scenario_and_session_details",
+        sql: include_str!("migrations/0006_scenario_and_session_details.sql"),
+    },
 ];
 
 /// Общее число известных миграций (для тестов).

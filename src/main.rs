@@ -45,6 +45,7 @@ async fn main() -> AppResult<()> {
     if applied > 0 {
         tracing::info!(count = applied, "применены миграции БД");
     }
+    infrastructure::db::seeds::run(&db)?;
 
     let cipher = Arc::new(SecretCipher::from_secret(
         &config.security.encryption_secret,
