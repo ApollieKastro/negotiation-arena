@@ -4,6 +4,9 @@ use std::path::PathBuf;
 
 use crate::error::{AppError, AppResult};
 
+/// Минимальная длина пароля: единый полис для `ADMIN_PASSWORD` и регистрации.
+pub const MIN_PASSWORD_LEN: usize = 6;
+
 /// Корневая конфигурация. Читается один раз при старте, дальше неизменна.
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -75,10 +78,10 @@ impl AppConfig {
                 "JWT_SECRET должен быть не короче 16 символов".into(),
             ));
         }
-        if self.security.admin_password.len() < 6 {
-            return Err(AppError::Config(
-                "ADMIN_PASSWORD должен быть не короче 6 символов".into(),
-            ));
+        if self.security.admin_password.len() < MIN_PASSWORD_LEN {
+            return Err(AppError::Config(format!(
+                "ADMIN_PASSWORD должен быть не короче {MIN_PASSWORD_LEN} символов"
+            )));
         }
         if self.security.jwt_ttl_seconds < 60 {
             return Err(AppError::Config(

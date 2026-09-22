@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::application::auth::AuthContext;
 use crate::application::provider::ProviderService;
+use crate::application::settings::{global_keys, SettingsService};
 use crate::domain::entities::scenario::Scenario;
 use crate::domain::entities::session::{
     MessageRole, Session, SessionMessage, SessionMode, SessionStatus,
@@ -16,8 +17,15 @@ use crate::domain::services::{analysis, scoring};
 use crate::error::{AppError, AppResult};
 use crate::infrastructure::db::repos::SqliteRepos;
 
-/// Максимум ходов игрока в сессии, чтобы LLM-затраты были ограниченными.
-const MAX_TURNS: u32 = 40;
+/// Резервный максимум ходов, если настройка `platform.max_turns` не задана
+/// или не является числом. Правда — в настройках ([`global_keys::MAX_TURNS`]).
+const FALLBACK_MAX_TURNS: u32 = 40;
+
+/// Максимальная длина реплики игрока в символах (защита от DoS и раздувания prompt).
+const MAX_PLAYER_TEXT_CHARS: usize = 4000;
+
+/// Верхняя граница `limit` для истории сессий.
+const MAX_HISTORY_LIMIT: u32 = 200;
 
 /// Итог одного хода игрока.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -42,11 +50,30 @@ pub struct SessionStarted {
 pub struct SessionService {
     repos: Arc<SqliteRepos>,
     providers: Arc<ProviderService>,
+    settings: Arc<SettingsService>,
 }
 
 impl SessionService {
-    pub fn new(repos: Arc<SqliteRepos>, providers: Arc<ProviderService>) -> Self {
-        Self { repos, providers }
+    pub fn new(
+        repos: Arc<SqliteRepos>,
+        providers: Arc<ProviderService>,
+        settings: Arc<SettingsService>,
+    ) -> Self {
+        Self {
+            repos,
+            providers,
+            settings,
+        }
+    }
+
+    /// Лимит ходов: правда из `platform.max_turns`, иначе [`FALLBACK_MAX_TURNS`].
+    fn max_turns(&self) -> u32 {
+        self.settings
+            .get_global(global_keys::MAX_TURNS)
+            .ok()
+            .and_then(|v| v.trim().parse::<u32>().ok())
+            .filter(|n| *n > 0)
+            .unwrap_or(FALLBACK_MAX_TURNS)
     }
 
     // ── Чтение ──
@@ -68,6 +95,7 @@ impl SessionService {
     }
 
     pub fn history(&self, actor: &AuthContext, limit: u32) -> AppResult<Vec<Session>> {
+        let limit = limit.clamp(1, MAX_HISTORY_LIMIT);
         self.repos.sessions.list_by_user(&actor.user_id, limit)
     }
 
@@ -143,15 +171,21 @@ impl SessionService {
         if player_text.is_empty() {
             return Err(AppError::BadRequest("реплика не может быть пустой".into()));
         }
+        if player_text.chars().count() > MAX_PLAYER_TEXT_CHARS {
+            return Err(AppError::BadRequest(format!(
+                "реплика не длиннее {MAX_PLAYER_TEXT_CHARS} символов"
+            )));
+        }
 
         let mut session = self.load(session_id)?;
-        self.ensure_owner(actor, &session)?;
+        self.ensure_owner_strict(actor, &session)?;
         if session.status != SessionStatus::Active {
             return Err(AppError::BadRequest("сессия уже завершена".into()));
         }
-        if session.turn_count >= MAX_TURNS {
+        let max_turns = self.max_turns();
+        if session.turn_count >= max_turns {
             return Err(AppError::BadRequest(format!(
-                "достигнут лимит ходов ({MAX_TURNS}); завершите сессию"
+                "достигнут лимит ходов ({max_turns}); завершите сессию"
             )));
         }
 
@@ -168,9 +202,12 @@ impl SessionService {
 
         // 2) Анализ и скоринг реплики игрока.
         let analysis = analysis::analyze(player_text);
+        let score_before = session.total_score;
         let score_delta = scoring::apply_analysis(&mut session.metrics, &analysis);
         session.total_score = session.metrics.total_score();
         session.turn_count += 1;
+        let total_score = session.total_score;
+        debug_assert_eq!(total_score, score_before + score_delta);
 
         let now = chrono::Utc::now().to_rfc3339();
         let player_msg = SessionMessage {
@@ -204,7 +241,7 @@ impl SessionService {
             player_score_delta: score_delta,
             strategy_slug: analysis.strategy.slug(),
             spin_code: analysis.spin.map(|s| s.code()),
-            total_score: score_delta, // legacy-поле совместимости; итог в session
+            total_score, // накопленный счёт сессии (не дельта этого хода)
         })
     }
 
@@ -219,16 +256,30 @@ impl SessionService {
         if player_text.is_empty() {
             return Err(AppError::BadRequest("реплика не может быть пустой".into()));
         }
+        if player_text.chars().count() > MAX_PLAYER_TEXT_CHARS {
+            return Err(AppError::BadRequest(format!(
+                "реплика не длиннее {MAX_PLAYER_TEXT_CHARS} символов"
+            )));
+        }
         let mut session = self.load(session_id)?;
-        self.ensure_owner(actor, &session)?;
+        self.ensure_owner_strict(actor, &session)?;
         if session.status != SessionStatus::Active {
             return Err(AppError::BadRequest("сессия уже завершена".into()));
         }
+        let max_turns = self.max_turns();
+        if session.turn_count >= max_turns {
+            return Err(AppError::BadRequest(format!(
+                "достигнут лимит ходов ({max_turns}); завершите сессию"
+            )));
+        }
 
         let analysis = analysis::analyze(player_text);
+        let score_before = session.total_score;
         let score_delta = scoring::apply_analysis(&mut session.metrics, &analysis);
         session.total_score = session.metrics.total_score();
         session.turn_count += 1;
+        let total_score = session.total_score;
+        debug_assert_eq!(total_score, score_before + score_delta);
 
         let history_len = self.repos.sessions.messages(session_id)?.len();
         let msg = SessionMessage {
@@ -250,7 +301,7 @@ impl SessionService {
             player_score_delta: score_delta,
             strategy_slug: analysis.strategy.slug(),
             spin_code: analysis.spin.map(|s| s.code()),
-            total_score: score_delta,
+            total_score,
         })
     }
 
@@ -262,7 +313,7 @@ impl SessionService {
         session_id: &str,
     ) -> AppResult<(Session, SessionReport)> {
         let mut session = self.load(session_id)?;
-        self.ensure_owner(actor, &session)?;
+        self.ensure_owner_strict(actor, &session)?;
         if session.status == SessionStatus::Finished {
             return Err(AppError::BadRequest("сессия уже завершена".into()));
         }
@@ -289,7 +340,7 @@ impl SessionService {
     /// Прерывает сессию (без финального отчёта победы).
     pub fn abandon(&self, actor: &AuthContext, session_id: &str) -> AppResult<Session> {
         let mut session = self.load(session_id)?;
-        self.ensure_owner(actor, &session)?;
+        self.ensure_owner_strict(actor, &session)?;
         if session.status != SessionStatus::Active {
             return Err(AppError::BadRequest("сессия уже не активна".into()));
         }
@@ -362,6 +413,19 @@ impl SessionService {
             Ok(())
         } else {
             Err(AppError::Forbidden("чужая сессия".into()))
+        }
+    }
+
+    /// Строгий владелец для мутаций: админ читает чужие сессии, но не ходит
+    /// в них, не завершает и не прерывает — иначе чужой токен admin'а ломает
+    /// целостность чужого прогресса.
+    fn ensure_owner_strict(&self, actor: &AuthContext, session: &Session) -> AppResult<()> {
+        if session.user_id == actor.user_id {
+            Ok(())
+        } else {
+            Err(AppError::Forbidden(
+                "изменять сессию может только её владелец".into(),
+            ))
         }
     }
 
@@ -529,6 +593,8 @@ mod tests {
             outcome.session.total_score,
             outcome.session.metrics.total_score()
         );
+        // TurnOutcome.total_score — накопленный итог, а не дельта хода.
+        assert_eq!(outcome.total_score, outcome.session.total_score);
         assert!(outcome.session.metrics.collaboration_count >= 1);
 
         let msgs = svc.sessions.messages(&user, &started.session.id).unwrap();
@@ -643,9 +709,61 @@ mod tests {
             .finish(&stranger_ctx, &started.session.id)
             .is_err());
 
-        // Админ (owner-доступ) — может смотреть.
+        // Админ (owner-доступ) — может смотреть, но не мутировать.
         let admin = ctx("admin-1", UserRole::Admin);
         assert!(svc.sessions.get(&admin, &started.session.id).is_ok());
+        assert!(
+            svc.sessions
+                .record_player_turn(&admin, &started.session.id, "hi")
+                .is_err(),
+            "админ не должен ходить в чужую сессию"
+        );
+        assert!(svc.sessions.finish(&admin, &started.session.id).is_err());
+        assert!(svc.sessions.abandon(&admin, &started.session.id).is_err());
+    }
+
+    #[test]
+    fn record_player_turn_respects_max_turns() {
+        let (_db, svc) = setup().unwrap();
+        let sc_id = seed_scenario(&svc);
+        let user = user_ctx(&svc);
+        let started = svc
+            .sessions
+            .start(&user, &sc_id, SessionMode::Text)
+            .unwrap();
+
+        // Поднимаем счётчик ходов до лимита в обход игрового цикла.
+        {
+            let mut s = svc
+                .repos
+                .sessions
+                .get(&started.session.id)
+                .unwrap()
+                .unwrap();
+            s.turn_count = FALLBACK_MAX_TURNS;
+            svc.repos.sessions.update(&s).unwrap();
+        }
+        let err = svc
+            .sessions
+            .record_player_turn(&user, &started.session.id, "ещё ход")
+            .unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)));
+    }
+
+    #[test]
+    fn overlong_player_text_is_rejected() {
+        let (_db, svc) = setup().unwrap();
+        let sc_id = seed_scenario(&svc);
+        let user = user_ctx(&svc);
+        let started = svc
+            .sessions
+            .start(&user, &sc_id, SessionMode::Text)
+            .unwrap();
+        let huge = "ы".repeat(MAX_PLAYER_TEXT_CHARS + 1);
+        assert!(svc
+            .sessions
+            .record_player_turn(&user, &started.session.id, &huge)
+            .is_err());
     }
 
     #[test]

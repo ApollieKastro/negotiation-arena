@@ -91,7 +91,9 @@ impl ScenarioRepository for SqliteScenarioRepo {
         let personality = serde_json::to_string(&scenario.partner_personality)?;
         let endings = serde_json::to_string(&scenario.endings)?;
         let partner_goals = serde_json::to_string(&scenario.partner_goals)?;
-        let now = chrono::Utc::now().to_rfc3339();
+        // ?23 берётся из entity: create-путь держит `updated_at = None`,
+        // update-путь выставляет таймстамп в сервисе.
+        let updated_at = scenario.updated_at.clone();
 
         conn.execute(
             "INSERT INTO scenarios (
@@ -151,7 +153,7 @@ impl ScenarioRepository for SqliteScenarioRepo {
                 scenario.is_active as i32,
                 scenario.created_by,
                 scenario.created_at,
-                now,
+                updated_at,
             ],
         )?;
         Ok(())

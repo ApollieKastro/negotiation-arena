@@ -158,7 +158,8 @@ impl ChatModel for Gemini {
         let resp = self
             .http
             .post(&url)
-            .query(&[("key", key)])
+            // Ключ — только в заголовке: query `?key=` утекает в логи/прокси.
+            .header("x-goog-api-key", key)
             .json(&body)
             .send()
             .await
@@ -180,7 +181,7 @@ impl ModelCatalog for Gemini {
         let resp = self
             .http
             .get(&url)
-            .query(&[("key", key)])
+            .header("x-goog-api-key", key)
             .send()
             .await
             .map_err(|e| transport_error(&self.provider_name, e))?;
@@ -232,7 +233,7 @@ impl ModelCatalog for Gemini {
         let resp = self
             .http
             .get(&url)
-            .query(&[("key", key)])
+            .header("x-goog-api-key", key)
             .send()
             .await
             .map_err(|e| transport_error(&self.provider_name, e))?;

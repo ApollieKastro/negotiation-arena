@@ -70,6 +70,16 @@ impl SettingsService {
                 "ключ настройки не может быть пустым".into(),
             ));
         }
+        if key.len() > MAX_KEY_CHARS {
+            return Err(AppError::BadRequest(format!(
+                "ключ настройки не длиннее {MAX_KEY_CHARS} символов"
+            )));
+        }
+        if value.chars().count() > MAX_VALUE_CHARS {
+            return Err(AppError::BadRequest(format!(
+                "значение настройки не длиннее {MAX_VALUE_CHARS} символов"
+            )));
+        }
         if key.starts_with("user:") {
             return Err(AppError::BadRequest(
                 "пользовательские ключи нельзя писать как глобальные".into(),
@@ -125,7 +135,13 @@ impl SettingsService {
             actor.require(super::Permission::ManageOwnSettings)?;
         }
         let storage_key = user_setting_key(user_id, key)?;
+        if value.chars().count() > MAX_VALUE_CHARS {
+            return Err(AppError::BadRequest(format!(
+                "значение настройки не длиннее {MAX_VALUE_CHARS} символов"
+            )));
+        }
         self.repos.settings.set(&storage_key, value)?;
+        self.audit_with_action(actor, "settings.set_user", &storage_key);
         Ok(())
     }
 
@@ -167,17 +183,27 @@ impl SettingsService {
     }
 
     fn audit(&self, actor: &AuthContext, key: &str) {
+        self.audit_with_action(actor, "settings.set_global", key);
+    }
+
+    fn audit_with_action(&self, actor: &AuthContext, action: &str, key: &str) {
         if let Err(err) = self.repos.audit.append(
             Some(&actor.user_id),
-            "settings.set_global",
+            action,
             Some("setting"),
             Some(key),
             None,
         ) {
-            tracing::warn!(error = %err, "не удалось записать аудит настроек");
+            tracing::warn!(error = %err, action, "не удалось записать аудит настроек");
         }
     }
 }
+
+/// Максимальная длина ключа настройки (символы).
+const MAX_KEY_CHARS: usize = 128;
+
+/// Максимальная длина значения настройки (символы).
+const MAX_VALUE_CHARS: usize = 4096;
 
 fn user_setting_key(user_id: &str, key: &str) -> AppResult<String> {
     let key = key.trim();
@@ -306,6 +332,17 @@ mod tests {
         assert!(svc
             .settings
             .set_user(&user, &user.user_id, " ", "v")
+            .is_err());
+        // Слишком длинное значение — отказ, а не раздувание БД.
+        let huge = "ы".repeat(MAX_VALUE_CHARS + 1);
+        assert!(svc
+            .settings
+            .set_user(&user, &user.user_id, user_keys::THEME, &huge)
+            .is_err());
+        let huge_key = "k".repeat(MAX_KEY_CHARS + 1);
+        assert!(svc
+            .settings
+            .set_global(&ctx("a9", UserRole::Admin), &huge_key, "v")
             .is_err());
     }
 

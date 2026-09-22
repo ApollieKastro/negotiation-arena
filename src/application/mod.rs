@@ -21,21 +21,16 @@ use crate::error::AppResult;
 use crate::infrastructure::crypto::SecretCipher;
 use crate::infrastructure::db::repos::SqliteRepos;
 use crate::infrastructure::providers::ProviderFactory;
+use auth::AuthService;
+use provider::ProviderService;
+use scenario::ScenarioService;
+use session::SessionService;
+use settings::SettingsService;
+use stats::StatsService;
 
-// Реэкспорт для web-слоя (stage-4) и composition root; в бинарном крейте
-// часть имён ещё не читается — гасим unused-imports до hardening (stage-8).
-#[allow(unused_imports)]
-pub use auth::{authorize, AuthContext, AuthService, AuthSession, Permission};
-#[allow(unused_imports)]
-pub use provider::ProviderService;
-#[allow(unused_imports)]
-pub use scenario::ScenarioService;
-#[allow(unused_imports)]
-pub use session::{SessionService, TurnOutcome};
-#[allow(unused_imports)]
-pub use settings::SettingsService;
-#[allow(unused_imports)]
-pub use stats::{ActivityPoint, LeaderboardEntry, PlatformOverview, StatsService, UserStats};
+// Реэкспорт прав — подмодули используют через `super::Permission`;
+// `AuthContext`/`authorize` нужны только testsupport (cfg(test)).
+pub use auth::Permission;
 
 /// Пакет прикладных сервисов — собирается один раз в composition root.
 pub struct Services {
@@ -68,9 +63,13 @@ impl Services {
             config.security.jwt_ttl_seconds,
         ));
         let scenarios = Arc::new(ScenarioService::new(repos.clone(), providers.clone()));
-        let sessions = Arc::new(SessionService::new(repos.clone(), providers.clone()));
-        let stats = Arc::new(StatsService::new(repos.clone()));
         let settings = Arc::new(SettingsService::new(repos.clone()));
+        let sessions = Arc::new(SessionService::new(
+            repos.clone(),
+            providers.clone(),
+            settings.clone(),
+        ));
+        let stats = Arc::new(StatsService::new(repos.clone()));
 
         Ok(Self {
             repos,
@@ -96,7 +95,7 @@ pub(crate) mod testsupport {
     use crate::infrastructure::db::repos::SqliteRepos;
     use crate::infrastructure::db::Database;
 
-    use super::{Permission, Services};
+    use super::{auth, Permission, Services};
     use crate::domain::entities::user::UserRole;
     use crate::error::AppResult;
 
@@ -130,32 +129,16 @@ pub(crate) mod testsupport {
     }
 
     /// Аутентифицированный контекст без обращения к БД (для authorize-тестов).
-    pub fn ctx(user_id: &str, role: UserRole) -> super::AuthContext {
-        super::AuthContext {
+    pub fn ctx(user_id: &str, role: UserRole) -> auth::AuthContext {
+        auth::AuthContext {
             user_id: user_id.to_string(),
             login: "tester".into(),
             role,
         }
     }
 
-    /// Создаёт реального пользователя в БД и возвращает его контекст
-    /// (нужен, когда `created_by`/аудит ссылаются на `users.id` по FK).
-    pub fn admin_ctx(svc: &super::Services, login: &str) -> super::AuthContext {
-        use crate::domain::ports::UserRepository;
-        let user = svc
-            .repos
-            .users
-            .create(login, "hash", UserRole::Admin, None)
-            .expect("create admin fixture");
-        super::AuthContext {
-            user_id: user.id,
-            login: user.login,
-            role: UserRole::Admin,
-        }
-    }
-
     /// Разрешены ли права роли (для таблиц истинности).
     pub fn can(role: UserRole, permission: Permission) -> bool {
-        super::authorize(role, permission).is_ok()
+        auth::authorize(role, permission).is_ok()
     }
 }

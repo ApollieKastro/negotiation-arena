@@ -49,6 +49,40 @@ pub trait UserRepository: Send + Sync {
 // Сессии
 // ─────────────────────────────────────────────────────────────
 
+/// Агрегаты сессий одного пользователя (считаются в SQL, без выборки строк).
+#[derive(Debug, Clone, Default)]
+pub struct UserSessionsAggregate {
+    pub total: u32,
+    pub finished: u32,
+    pub active: u32,
+    pub abandoned: u32,
+    pub best_score: i32,
+    pub avg_score: i32,
+    pub last_session_at: Option<String>,
+}
+
+/// Строка лидерборда, построенная одним SQL-запросом (JOIN + GROUP BY).
+#[derive(Debug, Clone)]
+pub struct LeaderboardRow {
+    pub user_id: String,
+    pub login: String,
+    pub display_name: Option<String>,
+    pub is_active: bool,
+    pub finished: u32,
+    pub best_score: i32,
+    pub avg_score: i32,
+}
+
+/// Сводка по всем сессиям платформы (один запрос).
+#[derive(Debug, Clone, Default)]
+pub struct PlatformSessionsAggregate {
+    pub total: u64,
+    pub finished: u64,
+    pub active: u64,
+    pub avg_finished_score: i32,
+    pub best_score: i32,
+}
+
 pub trait SessionRepository: Send + Sync {
     fn create(&self, session: &Session) -> AppResult<()>;
     fn get(&self, id: &str) -> AppResult<Option<Session>>;
@@ -56,6 +90,17 @@ pub trait SessionRepository: Send + Sync {
     fn update(&self, session: &Session) -> AppResult<()>;
     fn append_message(&self, message: &SessionMessage) -> AppResult<()>;
     fn messages(&self, session_id: &str) -> AppResult<Vec<SessionMessage>>;
+
+    /// Агрегаты сессий пользователя одной строкой SQL.
+    fn user_stats_aggregate(&self, user_id: &str) -> AppResult<UserSessionsAggregate>;
+    /// Лидерборд: JOIN users + GROUP BY user_id (только `finished`).
+    fn leaderboard_rows(&self) -> AppResult<Vec<LeaderboardRow>>;
+    /// Общая сводка по таблице сессий.
+    fn platform_sessions_aggregate(&self) -> AppResult<PlatformSessionsAggregate>;
+    /// Счётчик сессий по дням (`YYYY-MM-DD`) начиная с `since` (RFC3339/дата).
+    fn activity_by_day(&self, since: &str) -> AppResult<Vec<(String, u32)>>;
+    /// Сколько сессий привязано к сценарию (для отказа в удалении).
+    fn count_by_scenario(&self, scenario_id: &str) -> AppResult<u64>;
 }
 
 // ─────────────────────────────────────────────────────────────

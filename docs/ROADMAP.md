@@ -101,8 +101,10 @@
 
 ### Этап 8. Hardening — `[ ]`
 - [ ] Интеграционные тесты, покрытие
-- [ ] Безопасность (rate limit, CSRF, ротация ключей)
+- [ ] Безопасность (rate limit, CSRF, ротация ключей) — *deferred из ревью stage 3–4*
 - [ ] Документация, Docker, миграция старой БД
+
+**Отложено из ревью stage 3–4 (см. журнал):** rate-limit/lockout, refresh-ротация, CORS-allowlist, пагинация, session-транзакции, LLM-quota, FK-mapping, spawn_blocking для прочих sync-вызовов.
 
 ---
 
@@ -116,3 +118,4 @@
 | 2026-09-22 | 2 | Порты LLM/STT/TTS/каталога, адаптеры OpenAI-compat/Anthropic/Gemini/ElevenLabs/Deepgram, локальный менеджер моделей, фабрика `ProviderHandle`, ProviderKind + elevenlabs/deepgram; 76 тестов зелёные |
 | 2026-09-22 | 3 | Прикладные сервисы: AuthService+RBAC/JWT, Scenario (CRUD/import/AI-gen), Session (диалог+скоринг+финиш), Stats, Settings, Provider (ключи/роли); `Services` в `AppState`; 113 тестов зелёные |
 | 2026-09-22 | 4 | HTTP API: роуты `/api/v1` (auth, users, scenarios, sessions, settings, stats, providers), middleware `AuthUser`/`AppJson`/`AppQuery`, интеграционные тесты роутов; 130 тестов зелёные |
+| 2026-09-23 | 3–4 | Ревью незапушенного диффа (stage 3–4): auto-fix (mask_secret UTF-8, generic Upstream, MIN_PASSWORD_LEN, skip_deserializing, require/is_admin, login casefold+dummy_verify+timing equalizer, MAX_HISTORY_LIMIT, MAX_PLAYER_TEXT_CHARS, накопленный total_score, ensure_owner_strict, MAX_KEY/VALUE_CHARS, spawn_blocking, metrics warn, x-goog-api-key) + решения: SQL-агрегаты stats (N+1), 409 при удалении сценария с сессиями, единый MAX_TURNS из settings + миграция 0007, security-pin тесты. Deferred → stage 8: rate-limit, refresh-ротация, CORS-allowlist, пагинация, session-транзакции, LLM-quota, FK-mapping |

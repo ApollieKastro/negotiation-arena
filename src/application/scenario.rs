@@ -5,9 +5,14 @@ use std::sync::Arc;
 use crate::application::auth::AuthContext;
 use crate::application::provider::ProviderService;
 use crate::domain::entities::scenario::{Difficulty, Ending, Scenario};
-use crate::domain::ports::{AuditRepository, ChatMessage, ChatRequest, ScenarioRepository};
+use crate::domain::ports::{
+    AuditRepository, ChatMessage, ChatRequest, ScenarioRepository, SessionRepository,
+};
 use crate::error::{AppError, AppResult};
 use crate::infrastructure::db::repos::SqliteRepos;
+
+/// Максимальная длина брифа для ИИ-генерации (символы).
+const MAX_BRIEF_CHARS: usize = 4000;
 
 /// Управление сценариями (RBAC: `ManageScenarios` для записи; чтение — все).
 pub struct ScenarioService {
@@ -31,16 +36,13 @@ impl ScenarioService {
     pub fn get(&self, actor: &AuthContext, id: &str) -> AppResult<Scenario> {
         let scenario = self
             .repos
-            .scenes_get(id)?
+            .scenarios
+            .get(id)?
             .ok_or_else(|| AppError::NotFound("сценарий не найден".into()))?;
         if !scenario.is_active && !actor.is_admin() {
             return Err(AppError::NotFound("сценарий не найден".into()));
         }
         Ok(scenario)
-    }
-
-    pub fn count(&self) -> AppResult<u64> {
-        self.repos.scenarios.count()
     }
 
     // ── Запись (admin) ──
@@ -103,6 +105,13 @@ impl ScenarioService {
         actor.require(super::Permission::ManageScenarios)?;
         if self.repos.scenarios.get(id)?.is_none() {
             return Err(AppError::NotFound("сценарий не найден".into()));
+        }
+        // FK `ON DELETE CASCADE` уничтожил бы связанные сессии и реплики —
+        // явный 409 вместо молчаливого каскада.
+        if self.repos.sessions.count_by_scenario(id)? > 0 {
+            return Err(AppError::Conflict(
+                "нельзя удалить сценарий: с ним связаны сессии".into(),
+            ));
         }
         self.repos.scenarios.delete(id)?;
         self.audit(actor, "scenario.delete", id);
@@ -188,6 +197,11 @@ impl ScenarioService {
                 "бриф для генерации не может быть пустым".into(),
             ));
         }
+        if brief.chars().count() > MAX_BRIEF_CHARS {
+            return Err(AppError::BadRequest(format!(
+                "бриф не длиннее {MAX_BRIEF_CHARS} символов"
+            )));
+        }
 
         let (chat, model_key) = self.providers.resolve_chat().await?;
 
@@ -206,9 +220,9 @@ impl ScenarioService {
         let response = chat.chat(request).await?;
 
         let mut scenario = parse_scenario_json(&response.content)?;
-        if scenario.id.trim().is_empty() {
-            scenario.id = uuid::Uuid::new_v4().to_string();
-        }
+        // id от LLM не принимаем: иначе случайный/враждебный id перезапишет
+        // существующий сценарий через upsert.
+        scenario.id = uuid::Uuid::new_v4().to_string();
         scenario.created_at = chrono::Utc::now().to_rfc3339();
         scenario.updated_at = None;
         scenario.created_by = Some(actor.user_id.clone());
@@ -273,18 +287,6 @@ impl ScenarioService {
         ) {
             tracing::warn!(error = %err, action, "не удалось записать аудит");
         }
-    }
-}
-
-// Хелпер, чтобы не тянуть лишний импорт в каждый вызов get.
-trait ScenesGet {
-    fn scenes_get(&self, id: &str) -> AppResult<Option<Scenario>>;
-}
-
-impl ScenesGet for SqliteRepos {
-    fn scenes_get(&self, id: &str) -> AppResult<Option<Scenario>> {
-        use crate::domain::ports::ScenarioRepository;
-        self.scenarios.get(id)
     }
 }
 

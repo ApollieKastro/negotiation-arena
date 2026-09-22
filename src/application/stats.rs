@@ -68,9 +68,15 @@ impl StatsService {
         Self { repos }
     }
 
-    /// Статистика пользователя: своя — всегда; чужая — только `ViewAllStats`.
+    /// Статистика пользователя: своя — по `ViewOwnStats`; чужая — `ViewAllStats`.
+    ///
+    /// Без явного `require` для своего id любой авторизованный контекст
+    /// (в т.ч. сервисный) обходил бы таблицу прав. Агрегаты считаются в SQL
+    /// одной строкой — без выборки всех сессий в память (N+1 устранён).
     pub fn user_stats(&self, actor: &AuthContext, user_id: &str) -> AppResult<UserStats> {
-        if user_id != actor.user_id {
+        if user_id == actor.user_id {
+            actor.require(super::Permission::ViewOwnStats)?;
+        } else {
             actor.require(super::Permission::ViewAllStats)?;
         }
         let user = self
@@ -78,8 +84,19 @@ impl StatsService {
             .users
             .by_id(user_id)?
             .ok_or_else(|| AppError::NotFound("пользователь не найден".into()))?;
-        let sessions = self.repos.sessions.list_by_user(user_id, 1000)?;
-        Ok(compute_user_stats(&user, &sessions))
+        let agg = self.repos.sessions.user_stats_aggregate(user_id)?;
+        Ok(UserStats {
+            user_id: user.id.clone(),
+            login: user.login.clone(),
+            display_name: user.display_name.clone(),
+            total_sessions: agg.total,
+            finished: agg.finished,
+            active: agg.active,
+            abandoned: agg.abandoned,
+            best_score: agg.best_score,
+            avg_score: agg.avg_score,
+            last_session_at: agg.last_session_at,
+        })
     }
 
     /// Своя сводка.
@@ -89,28 +106,28 @@ impl StatsService {
     }
 
     /// Лидерборд: только завершённые сессии, по best_score → avg → count.
+    ///
+    /// Один SQL-запрос (JOIN + GROUP BY), без цикла по пользователям.
     pub fn leaderboard(&self, actor: &AuthContext, limit: u32) -> AppResult<Vec<LeaderboardEntry>> {
         actor.require(super::Permission::ViewAllStats)?;
-        let users = self.repos.users.list()?;
         let limit = limit.clamp(1, 100);
 
-        let mut rows: Vec<LeaderboardEntry> = Vec::new();
-        for user in users.iter().filter(|u| u.is_active) {
-            let sessions = self.repos.sessions.list_by_user(&user.id, 1000)?;
-            let stats = compute_user_stats(user, &sessions);
-            if stats.finished == 0 {
-                continue;
-            }
-            rows.push(LeaderboardEntry {
+        let mut rows: Vec<LeaderboardEntry> = self
+            .repos
+            .sessions
+            .leaderboard_rows()?
+            .into_iter()
+            .filter(|r| r.is_active && r.finished > 0)
+            .map(|r| LeaderboardEntry {
                 rank: 0,
-                user_id: user.id.clone(),
-                login: user.login.clone(),
-                display_name: user.display_name.clone(),
-                finished_sessions: stats.finished,
-                best_score: stats.best_score,
-                avg_score: stats.avg_score,
-            });
-        }
+                user_id: r.user_id,
+                login: r.login,
+                display_name: r.display_name,
+                finished_sessions: r.finished,
+                best_score: r.best_score,
+                avg_score: r.avg_score,
+            })
+            .collect();
 
         rows.sort_by(|a, b| {
             b.best_score
@@ -127,6 +144,8 @@ impl StatsService {
     }
 
     /// Сводка по всей платформе.
+    ///
+    /// Сессии — один SQL-агрегат; users/scenarios — по одному list (не N+1).
     pub fn overview(&self, actor: &AuthContext) -> AppResult<PlatformOverview> {
         actor.require(super::Permission::ViewAllStats)?;
 
@@ -135,70 +154,47 @@ impl StatsService {
         let active_users = users.iter().filter(|u| u.is_active).count() as u64;
         let active_scenarios = scenarios.iter().filter(|s| s.is_active).count() as u64;
 
-        let mut session_total = 0u64;
-        let mut finished = 0u64;
-        let mut active = 0u64;
-        let mut score_sum = 0i64;
-        let mut score_n = 0i64;
-        let mut best = i32::MIN;
-
-        for user in &users {
-            for s in self.repos.sessions.list_by_user(&user.id, 1000)? {
-                session_total += 1;
-                match s.status {
-                    SessionStatus::Finished => {
-                        finished += 1;
-                        score_sum += i64::from(s.total_score);
-                        score_n += 1;
-                        best = best.max(s.total_score);
-                    }
-                    SessionStatus::Active => active += 1,
-                    SessionStatus::Abandoned => {}
-                }
-            }
-        }
+        let sess = self.repos.sessions.platform_sessions_aggregate()?;
 
         Ok(PlatformOverview {
             users: users.len() as u64,
             active_users,
-            sessions: session_total,
-            finished_sessions: finished,
-            active_sessions: active,
+            sessions: sess.total,
+            finished_sessions: sess.finished,
+            active_sessions: sess.active,
             scenarios: scenarios.len() as u64,
             active_scenarios,
-            avg_finished_score: if score_n > 0 {
-                (score_sum / score_n) as i32
-            } else {
-                0
-            },
-            best_score: if best == i32::MIN { 0 } else { best },
+            avg_finished_score: sess.avg_finished_score,
+            best_score: sess.best_score,
         })
     }
 
     /// Сессии по дням за последние `days` суток (дни без сессий — 0).
+    ///
+    /// Счётчики по дням — один SQL GROUP BY; пустые дни достраиваются в памяти.
     pub fn activity(&self, actor: &AuthContext, days: u32) -> AppResult<Vec<ActivityPoint>> {
         actor.require(super::Permission::ViewAllStats)?;
         let days = days.clamp(1, 365);
-        let users = self.repos.users.list()?;
 
         let mut by_day: BTreeMap<String, u32> = BTreeMap::new();
+        let mut since = None;
         for offset in 0..i64::from(days) {
             if let Some(day) = chrono::Utc::now()
                 .date_naive()
                 .checked_sub_signed(chrono::Duration::days(offset))
             {
-                by_day
-                    .entry(day.format("%Y-%m-%d").to_string())
-                    .or_insert(0);
+                let key = day.format("%Y-%m-%d").to_string();
+                if since.as_deref().is_none_or(|s| key.as_str() < s) {
+                    since = Some(key.clone());
+                }
+                by_day.entry(key).or_insert(0);
             }
         }
+        let since = since.unwrap_or_else(|| chrono::Utc::now().format("%Y-%m-%d").to_string());
 
-        for user in &users {
-            for s in self.repos.sessions.list_by_user(&user.id, 1000)? {
-                let date: String = s.created_at.chars().take(10).collect();
-                if let Some(slot) = by_day.get_mut(&date) {
-                    *slot += 1;
-                }
+        for (date, count) in self.repos.sessions.activity_by_day(&since)? {
+            if let Some(slot) = by_day.get_mut(&date) {
+                *slot = count;
             }
         }
 
@@ -260,7 +256,7 @@ mod tests {
     use crate::application::testsupport::{ctx, setup};
     use crate::domain::entities::scenario::{Difficulty, Scenario};
     use crate::domain::entities::session::{
-        MessageRole, SessionMessage, SessionMetrics, SessionMode,
+        MessageRole, Session, SessionMessage, SessionMetrics, SessionMode, SessionStatus,
     };
     use crate::domain::entities::user::UserRole;
 
@@ -378,6 +374,8 @@ mod tests {
         let admin = ctx("admin-1", UserRole::Admin);
 
         assert!(svc.stats.my_stats(&alice_ctx).is_ok());
+        // Своя сводка через user_stats тоже требует ViewOwnStats.
+        assert!(svc.stats.user_stats(&alice_ctx, &a.id).is_ok());
         assert!(svc.stats.user_stats(&alice_ctx, &b.id).is_err());
         assert!(svc.stats.user_stats(&admin, &a.id).is_ok());
         assert!(svc.stats.leaderboard(&alice_ctx, 10).is_err());

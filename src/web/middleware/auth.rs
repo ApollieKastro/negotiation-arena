@@ -5,8 +5,8 @@ use axum::extract::FromRequestParts;
 use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
 
-use crate::application::auth::{AuthContext, Permission};
-use crate::error::{AppError, AppResult};
+use crate::application::auth::AuthContext;
+use crate::error::AppError;
 use crate::web::state::AppState;
 
 /// Аутентифицированный контекст запроса.
@@ -22,17 +22,8 @@ impl AuthUser {
         &self.0
     }
 
-    /// Проверяет право текущего пользователя (RBAC).
-    pub fn require(&self, permission: Permission) -> AppResult<()> {
-        self.0.require(permission)
-    }
-
     pub fn user_id(&self) -> &str {
         &self.0.user_id
-    }
-
-    pub fn is_admin(&self) -> bool {
-        self.0.is_admin()
     }
 }
 

@@ -165,18 +165,31 @@ impl AuthService {
     }
 
     /// Вход по логину и паролю. Ошибки не раскрывают, существует ли логин.
+    ///
+    /// Логин нормализуется так же, как при регистрации (`trim` + lowercase),
+    /// иначе `Alice` / `alice` — разные учётки. При неизвестном логине
+    /// выполняется dummy-проверка пароля, чтобы время ответа не выдавало
+    /// existence-oracle.
     pub fn login(&self, login: &str, password: &str) -> AppResult<AuthSession> {
-        let login = login.trim();
+        let login = login.trim().to_lowercase();
         if login.is_empty() || password.is_empty() {
             return Err(AppError::Unauthorized("неверный логин или пароль".into()));
         }
 
-        let found = self.repos.users.by_login(login)?;
+        let found = self.repos.users.by_login(&login)?;
         let Some(with_secret) = found else {
-            // Одновременный паролонезависимый отказ — без перебора пользователей.
+            crate::infrastructure::crypto::password::dummy_verify(password);
+            self.audit(None, "auth.login_failed", None, Some(login.as_str()), None);
             return Err(AppError::Unauthorized("неверный логин или пароль".into()));
         };
         if !verify_password(password, &with_secret.password_hash) {
+            self.audit(
+                Some(&with_secret.user.id),
+                "auth.login_failed",
+                None,
+                None,
+                None,
+            );
             return Err(AppError::Unauthorized("неверный логин или пароль".into()));
         }
         if !with_secret.user.is_active {
@@ -304,8 +317,17 @@ impl AuthService {
         if actor.user_id == user_id {
             return Err(AppError::BadRequest("нельзя удалить самого себя".into()));
         }
-        if self.repos.users.by_id(user_id)?.is_none() {
-            return Err(AppError::NotFound("пользователь не найден".into()));
+        let target = self
+            .repos
+            .users
+            .by_id(user_id)?
+            .ok_or_else(|| AppError::NotFound("пользователь не найден".into()))?;
+        // Репозиторий молча пропускает `role = admin` (DELETE ... AND role != 'admin'),
+        // поэтому явный отказ здесь — иначе API отвечает ok, ничего не удалив.
+        if target.role == UserRole::Admin {
+            return Err(AppError::BadRequest(
+                "нельзя удалить учётную запись администратора".into(),
+            ));
         }
         self.repos.users.delete(user_id)?;
         self.audit(
@@ -371,7 +393,14 @@ impl AuthService {
     }
 
     fn decode(&self, token: &str) -> AppResult<Claims> {
-        let token = token.trim().strip_prefix("Bearer ").unwrap_or(token).trim();
+        let token = token.trim();
+        // Схема авторизации нечувствительна к регистру: `BEARER x` == `Bearer x`.
+        let token = token
+            .split_once(' ')
+            .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
+            .map(|(_, rest)| rest)
+            .unwrap_or(token)
+            .trim();
         decode::<Claims>(
             token,
             &DecodingKey::from_secret(self.jwt_secret.as_bytes()),
@@ -507,18 +536,35 @@ mod tests {
         let carol = svc.repos.users.by_login("carol").unwrap().unwrap().user;
         svc.auth.set_active(&admin_ctx, &carol.id, false).unwrap();
 
-        // Вход и проверка старого токена — отказ.
+        // Вход после блокировки — отказ.
         assert!(svc.auth.login("carol", "secret1").is_err());
-        let old = {
-            // Старый токен выпускался до блокировки: логиним нечем, берём из refresh-пути
-            // через прямой decode невозможно — достаточно, что login уже закрыт.
-            assert!(svc.auth.login("carol", "secret1").is_err());
-            true
+        // Токен, выпущенный до блокировки, всё ещё подписан верно, но verify
+        // обязан отказать: активность проверяется из БД на каждый запрос.
+        let pre_block_token = {
+            // carol уже отключена — login не пройдёт; выпускаем токен напрямую
+            // через refresh-путь нельзя, поэтому поднимаем активность, логинимся
+            // и снова блокируем.
+            svc.repos.users.set_active(&carol.id, true).unwrap();
+            let tok = svc.auth.login("carol", "secret1").unwrap().token;
+            svc.repos.users.set_active(&carol.id, false).unwrap();
+            tok
         };
-        assert!(old);
-        // Свежий verify с любым мусором — Unauthorized (пользователь не активен
-        // и без токена не пройти).
+        assert!(
+            svc.auth.verify(&pre_block_token).is_err(),
+            "отключённый пользователь не должен проходить verify по старому токену"
+        );
+        // Мусорный токен — Unauthorized.
         assert!(svc.auth.verify("Bearer garbage").is_err());
+    }
+
+    #[test]
+    fn login_is_case_insensitive_like_register() {
+        let (_db, svc) = setup().unwrap();
+        svc.auth.register("Masha", "secret1", None).unwrap();
+        // Регистрация нормализует в lowercase; вход с другим регистром должен работать.
+        let session = svc.auth.login("MASHA", "secret1").unwrap();
+        assert_eq!(session.user.login, "masha");
+        assert!(svc.auth.login("  masha  ", "secret1").is_ok());
     }
 
     #[test]
@@ -536,6 +582,26 @@ mod tests {
         let (_db, svc) = setup().unwrap();
         assert!(svc.auth.verify("not-a-jwt").is_err());
         assert!(svc.auth.refresh("").is_err());
+    }
+
+    #[test]
+    fn bearer_scheme_is_case_insensitive() {
+        let (_db, svc) = setup().unwrap();
+        svc.auth.register("casey", "secret1", None).unwrap();
+        let token = svc.auth.login("casey", "secret1").unwrap().token;
+
+        // decode() strip_prefix: "Bearer " и "bearer " — равнозначны.
+        for prefix in ["Bearer ", "bearer ", "BEARER ", "BeArEr "] {
+            let full = format!("{prefix}{token}");
+            assert!(
+                svc.auth.verify(&full).is_ok(),
+                "префикс {prefix:?} должен приниматься"
+            );
+        }
+        // Без схемы — тоже работает (strip идёт опционально).
+        assert!(svc.auth.verify(&token).is_ok());
+        // Мусорная схема не равна Bearer.
+        assert!(svc.auth.verify(&format!("Token {token}")).is_err());
     }
 
     #[test]

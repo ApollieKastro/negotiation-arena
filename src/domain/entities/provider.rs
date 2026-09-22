@@ -14,7 +14,9 @@ pub struct Provider {
     pub name: String,
     pub kind: ProviderKind,
     pub base_url: Option<String>,
-    #[serde(skip_serializing)]
+    /// Шифротекст ключа: не сериализуется наружу и не принимается из запроса
+    /// (пишется только сервисом через шифрование).
+    #[serde(skip_serializing, skip_deserializing)]
     pub api_key_encrypted: Option<String>,
     /// Маска ключа для UI, например `••••abcd`.
     pub api_key_hint: Option<String>,

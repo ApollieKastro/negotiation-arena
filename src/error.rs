@@ -71,6 +71,12 @@ impl AppError {
                 tracing::error!(error = %msg, "ошибка конфигурации");
                 "Внутренняя ошибка конфигурации".to_string()
             }
+            Self::Upstream { provider, message } => {
+                // Тело ответа провайдера может содержать внутренние URL и детали —
+                // клиентам отдаём общее сообщение, детали только в лог.
+                tracing::warn!(provider, message, "ошибка внешнего провайдера");
+                "Внешний сервис недоступен".to_string()
+            }
             other => other.to_string(),
         }
     }

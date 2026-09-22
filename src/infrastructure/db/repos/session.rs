@@ -7,7 +7,9 @@ use rusqlite::{params, OptionalExtension, Row};
 use crate::domain::entities::session::{
     MessageRole, Session, SessionMessage, SessionMode, SessionStatus,
 };
-use crate::domain::ports::SessionRepository;
+use crate::domain::ports::{
+    LeaderboardRow, PlatformSessionsAggregate, SessionRepository, UserSessionsAggregate,
+};
 use crate::error::AppResult;
 use crate::infrastructure::db::Database;
 
@@ -26,7 +28,18 @@ impl SqliteSessionRepo {
         let metrics_raw: String = row.get(7)?;
         let turn_count: i64 = row.get(6)?;
 
-        let metrics = serde_json::from_str(&metrics_raw).unwrap_or_default();
+        let metrics = match serde_json::from_str(&metrics_raw) {
+            Ok(m) => m,
+            Err(err) => {
+                // Молчаливая деградация до default теряет счёт — хотя бы логируем.
+                tracing::warn!(
+                    session_id = %row.get::<_, String>(0).unwrap_or_default(),
+                    error = %err,
+                    "не удалось разобрать sessions.metrics, используем default"
+                );
+                Default::default()
+            }
+        };
 
         Ok(Session {
             id: row.get(0)?,
@@ -157,6 +170,126 @@ impl SessionRepository for SqliteSessionRepo {
         )?;
         let rows = stmt.query_map(params![session_id], Self::map_message)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    fn user_stats_aggregate(&self, user_id: &str) -> AppResult<UserSessionsAggregate> {
+        let conn = self.db.conn();
+        let row = conn.query_row(
+            "SELECT COUNT(*),
+                    COALESCE(SUM(CASE WHEN status = 'finished' THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN status = 'abandoned' THEN 1 ELSE 0 END), 0),
+                    COALESCE(MAX(CASE WHEN status = 'finished' THEN total_score END), 0),
+                    COALESCE(AVG(CASE WHEN status = 'finished' THEN total_score END), 0),
+                    MAX(created_at)
+             FROM sessions WHERE user_id = ?1",
+            params![user_id],
+            |r| {
+                let total: i64 = r.get(0)?;
+                let finished: i64 = r.get(1)?;
+                let active: i64 = r.get(2)?;
+                let abandoned: i64 = r.get(3)?;
+                let best: i64 = r.get(4)?;
+                let avg: f64 = r.get(5)?;
+                let last: Option<String> = r.get(6)?;
+                Ok((total, finished, active, abandoned, best, avg, last))
+            },
+        )?;
+        let (total, finished, active, abandoned, best, avg, last) = row;
+        Ok(UserSessionsAggregate {
+            total: total.max(0) as u32,
+            finished: finished.max(0) as u32,
+            active: active.max(0) as u32,
+            abandoned: abandoned.max(0) as u32,
+            best_score: best as i32,
+            avg_score: avg as i32,
+            last_session_at: last,
+        })
+    }
+
+    fn leaderboard_rows(&self) -> AppResult<Vec<LeaderboardRow>> {
+        let conn = self.db.conn();
+        let mut stmt = conn.prepare(
+            "SELECT s.user_id, u.login, u.display_name, u.is_active,
+                    COUNT(*) AS finished,
+                    MAX(s.total_score) AS best_score,
+                    COALESCE(AVG(s.total_score), 0) AS avg_score
+             FROM sessions s
+             JOIN users u ON u.id = s.user_id
+             WHERE s.status = 'finished' AND u.is_active = 1
+             GROUP BY s.user_id, u.login, u.display_name, u.is_active",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            // Колонки: 0=user_id, 1=login, 2=display_name, 3=is_active,
+            // 4=finished, 5=best_score, 6=avg_score.
+            let finished: i64 = r.get(4)?;
+            let best: i64 = r.get(5)?;
+            let avg: f64 = r.get(6)?;
+            Ok(LeaderboardRow {
+                user_id: r.get(0)?,
+                login: r.get(1)?,
+                display_name: r.get(2)?,
+                is_active: r.get::<_, i64>(3)? != 0,
+                finished: finished.max(0) as u32,
+                best_score: best as i32,
+                avg_score: avg as i32,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    fn platform_sessions_aggregate(&self) -> AppResult<PlatformSessionsAggregate> {
+        let conn = self.db.conn();
+        let row = conn.query_row(
+            "SELECT COUNT(*),
+                    COALESCE(SUM(CASE WHEN status = 'finished' THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0),
+                    COALESCE(AVG(CASE WHEN status = 'finished' THEN total_score END), 0),
+                    COALESCE(MAX(CASE WHEN status = 'finished' THEN total_score END), 0)
+             FROM sessions",
+            [],
+            |r| {
+                let total: i64 = r.get(0)?;
+                let finished: i64 = r.get(1)?;
+                let active: i64 = r.get(2)?;
+                let avg: f64 = r.get(3)?;
+                let best: i64 = r.get(4)?;
+                Ok((total, finished, active, avg, best))
+            },
+        )?;
+        let (total, finished, active, avg, best) = row;
+        Ok(PlatformSessionsAggregate {
+            total: total.max(0) as u64,
+            finished: finished.max(0) as u64,
+            active: active.max(0) as u64,
+            avg_finished_score: avg as i32,
+            best_score: best as i32,
+        })
+    }
+
+    fn activity_by_day(&self, since: &str) -> AppResult<Vec<(String, u32)>> {
+        let conn = self.db.conn();
+        let mut stmt = conn.prepare(
+            "SELECT substr(created_at, 1, 10) AS day, COUNT(*)
+             FROM sessions WHERE created_at >= ?1
+             GROUP BY day ORDER BY day ASC",
+        )?;
+        let rows = stmt.query_map(params![since], |r| {
+            let day: String = r.get(0)?;
+            let n: i64 = r.get(1)?;
+            Ok((day, n.max(0) as u32))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    fn count_by_scenario(&self, scenario_id: &str) -> AppResult<u64> {
+        let conn = self.db.conn();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE scenario_id = ?1",
+            params![scenario_id],
+            |r| r.get(0),
+        )?;
+        Ok(count.max(0) as u64)
     }
 }
 
