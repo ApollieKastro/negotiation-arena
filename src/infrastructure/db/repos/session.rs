@@ -167,13 +167,14 @@ mod tests {
     use crate::domain::entities::session::SessionMetrics;
     use crate::domain::entities::user::UserRole;
     use crate::domain::ports::{ScenarioRepository, SessionRepository, UserRepository};
+    use crate::infrastructure::db::repos::SqliteRepos;
     use crate::infrastructure::db::Database;
     use std::sync::Arc;
 
-    fn make_session(id: &str) -> Session {
+    fn make_session(id: &str, user_id: &str) -> Session {
         Session {
             id: id.to_string(),
-            user_id: "user-1".to_string(),
+            user_id: user_id.to_string(),
             scenario_id: "sc-1".to_string(),
             mode: SessionMode::Text,
             status: SessionStatus::Active,
@@ -188,9 +189,10 @@ mod tests {
         }
     }
 
-    fn seed_parents(db: &Arc<Database>) {
+    /// Создаёт родительские записи и возвращает id созданного пользователя.
+    fn seed_parents(db: &Arc<Database>) -> String {
         let repos = SqliteRepos::new(db.clone());
-        repos
+        let user = repos
             .users
             .create("tester", "hash", UserRole::User, None)
             .unwrap();
@@ -221,16 +223,7 @@ mod tests {
             updated_at: None,
         };
         repos.scenarios.upsert(&scenario).unwrap();
-        // user_id в тесте = "user-1" — синхронизируем.
-        repos
-            .users
-            .create(
-                "user-1",
-                "hash",
-                UserRole::User,
-                None,
-            )
-            .ok();
+        user.id
     }
 
     #[test]
@@ -238,9 +231,9 @@ mod tests {
         let db = Arc::new(Database::open_in_memory().unwrap());
         db.run_migrations().unwrap();
         let repo = SqliteSessionRepo::new(db.clone());
-        seed_parents(&db);
+        let user_id = seed_parents(&db);
 
-        let session = make_session("s1");
+        let session = make_session("s1", &user_id);
         repo.create(&session).unwrap();
 
         let loaded = repo.get("s1").unwrap().expect("сессия должна найтись");

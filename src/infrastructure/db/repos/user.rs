@@ -75,7 +75,7 @@ impl UserRepository for SqliteUserRepo {
         let sql = "SELECT id, login, display_name, role, is_active, created_at, password_hash
              FROM users WHERE login = ?1";
         let row = conn
-            .query_row(&sql, params![login], |row| {
+            .query_row(sql, params![login], |row| {
                 Ok((Self::map_row(row)?, row.get::<_, String>(6)?))
             })
             .optional()?;
