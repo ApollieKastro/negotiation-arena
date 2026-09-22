@@ -20,7 +20,7 @@ use crate::infrastructure::db::repos::SqliteRepos;
 const MAX_TURNS: u32 = 40;
 
 /// Итог одного хода игрока.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct TurnOutcome {
     pub session: Session,
     pub partner_reply: String,
@@ -31,7 +31,7 @@ pub struct TurnOutcome {
 }
 
 /// Результат старта сессии: сессия + сценарий для карточек UI.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct SessionStarted {
     pub session: Session,
     pub scenario: Scenario,

@@ -1,0 +1,100 @@
+//! Управление пользователями (RBAC: `ManageUsers`).
+
+use axum::extract::{Path, State};
+use axum::http::StatusCode;
+use axum::Json;
+use serde::Deserialize;
+
+use crate::domain::entities::user::{User, UserRole};
+use crate::error::AppResult;
+use crate::web::middleware::{AppJson, AuthUser};
+use crate::web::state::AppState;
+
+#[derive(Debug, Deserialize)]
+pub struct CreateUserRequest {
+    pub login: String,
+    pub password: String,
+    pub role: UserRole,
+    #[serde(default)]
+    pub display_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RoleRequest {
+    pub role: UserRole,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ActiveRequest {
+    pub is_active: bool,
+}
+
+/// `GET /api/v1/users` — список пользователей.
+pub async fn list(State(state): State<AppState>, user: AuthUser) -> AppResult<Json<Vec<User>>> {
+    let users = state.services.auth.list_users(user.context())?;
+    Ok(Json(users))
+}
+
+/// `POST /api/v1/users` — создание пользователя администратором.
+pub async fn create(
+    State(state): State<AppState>,
+    actor: AuthUser,
+    AppJson(req): AppJson<CreateUserRequest>,
+) -> AppResult<(StatusCode, Json<User>)> {
+    let user = state.services.auth.create_user(
+        actor.context(),
+        &req.login,
+        &req.password,
+        req.role,
+        req.display_name.as_deref(),
+    )?;
+    Ok((StatusCode::CREATED, Json(user)))
+}
+
+/// `GET /api/v1/users/:id` — профиль по id.
+pub async fn get(
+    State(state): State<AppState>,
+    actor: AuthUser,
+    Path(id): Path<String>,
+) -> AppResult<Json<User>> {
+    let user = state.services.auth.get_user(actor.context(), &id)?;
+    Ok(Json(user))
+}
+
+/// `PATCH /api/v1/users/:id/role` — смена роли.
+pub async fn set_role(
+    State(state): State<AppState>,
+    actor: AuthUser,
+    Path(id): Path<String>,
+    AppJson(req): AppJson<RoleRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    state
+        .services
+        .auth
+        .set_role(actor.context(), &id, req.role)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// `PATCH /api/v1/users/:id/active` — включение/отключение учётной записи.
+pub async fn set_active(
+    State(state): State<AppState>,
+    actor: AuthUser,
+    Path(id): Path<String>,
+    AppJson(req): AppJson<ActiveRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    state
+        .services
+        .auth
+        .set_active(actor.context(), &id, req.is_active)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// `DELETE /api/v1/users/:id` — удаление пользователя.
+pub async fn remove(
+    State(state): State<AppState>,
+    actor: AuthUser,
+    Path(id): Path<String>,
+) -> AppResult<Json<serde_json::Value>> {
+    state.services.auth.delete_user(actor.context(), &id)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}

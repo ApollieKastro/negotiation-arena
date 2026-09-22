@@ -40,6 +40,10 @@ uuid = { version = "1", features = ["v4"] }
 # ── Шифрование секретов провайдеров ──
 aes-gcm = "0.10"
 
+[dev-dependencies]
+# Интеграционные тесты HTTP: `ServiceExt::oneshot` (util уже включён в дереве).
+tower = { version = "0.5", features = ["util"] }
+
 [profile.release]
 lto = "thin"
 strip = true

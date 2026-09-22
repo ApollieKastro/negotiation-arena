@@ -73,10 +73,11 @@
 
 **Проверки:** `cargo fmt --check` · `cargo clippy -- -D warnings` · `cargo test`
 
-### Этап 4. HTTP API — `[ ]`
-- [ ] Роуты admin/user, версионирование `/api/v1`
-- [ ] Валидация запросов, единая обработка ошибок
-- [ ] Middleware: auth, RBAC, аудит
+### Этап 4. HTTP API — `[x]` выполнен
+- [x] Роуты admin/user, версионирование `/api/v1`
+- [x] Валидация запросов, единая обработка ошибок
+- [x] Middleware: auth, RBAC, аудит
+- [x] Интеграционные тесты роутов (auth flow, RBAC, 401/403/404/400)
 
 ### Этап 5. Админ-панель (UI) — `[ ]`
 - [ ] Новый дизайн-система (токены, компоненты, тёмная/светлая тема)
@@ -114,3 +115,4 @@
 | 2026-09-22 | 1 | Сущности домена, порты репозиториев, SQLite-реализации, сиды (admin + 6 сценариев), сервисы analysis/scoring, Argon2id, миграция 0006; 26 тестов зелёные |
 | 2026-09-22 | 2 | Порты LLM/STT/TTS/каталога, адаптеры OpenAI-compat/Anthropic/Gemini/ElevenLabs/Deepgram, локальный менеджер моделей, фабрика `ProviderHandle`, ProviderKind + elevenlabs/deepgram; 76 тестов зелёные |
 | 2026-09-22 | 3 | Прикладные сервисы: AuthService+RBAC/JWT, Scenario (CRUD/import/AI-gen), Session (диалог+скоринг+финиш), Stats, Settings, Provider (ключи/роли); `Services` в `AppState`; 113 тестов зелёные |
+| 2026-09-22 | 4 | HTTP API: роуты `/api/v1` (auth, users, scenarios, sessions, settings, stats, providers), middleware `AuthUser`/`AppJson`/`AppQuery`, интеграционные тесты роутов; 130 тестов зелёные |

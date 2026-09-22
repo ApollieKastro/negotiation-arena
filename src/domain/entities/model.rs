@@ -52,21 +52,29 @@ impl ModelRole {
 }
 
 /// Тип провайдера. Определяет, какой адаптер используется для вызовов API.
+///
+/// JSON-имена совпадают с [`ProviderKind::as_str`] / [`ProviderKind::from_str`]
+/// (и со значением в БД), чтобы API и хранилище не расходились.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum ProviderKind {
     /// Любой провайдер с OpenAI-совместимым API (OpenAI, Groq, OpenRouter,
     /// Together, Mistral, DeepSeek, Ollama, LM Studio, vLLM, LocalAI...).
+    #[serde(rename = "openai_compatible")]
     OpenAiCompatible,
     /// Anthropic Messages API.
+    #[serde(rename = "anthropic")]
     Anthropic,
     /// Google Gemini API.
+    #[serde(rename = "gemini")]
     Gemini,
     /// ElevenLabs (синтез речи).
+    #[serde(rename = "elevenlabs")]
     ElevenLabs,
     /// Deepgram (распознавание и синтез речи).
+    #[serde(rename = "deepgram")]
     Deepgram,
     /// Локальный запуск через внешнюю команду/сервис (whisper.cpp, Piper и т.п.).
+    #[serde(rename = "local")]
     Local,
 }
 
