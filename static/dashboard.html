@@ -1,860 +1,413 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Арена переговоров</title>
+    <link rel="stylesheet" href="/static/css/style.css">
     <style>
-        :root {
-            --bg-main: #1a1a2e;
-            --bg-card: #16213e;
-            --bg-input: #0f3460;
-            --accent: #5B5BFF;
-            --green: #00b894;
-            --red: #e17055;
-            --orange: #fdcb6e;
-            --text: #ffffff;
-            --text-dim: #a0a0b0;
-            --border: #2a2a4a;
-        }
-
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-
-        body {
-            font-family: 'Segoe UI', sans-serif;
-            background: var(--bg-main);
-            color: var(--text);
-            min-height: 100vh;
-        }
-
-        /* Header */
-        .header {
-            background: var(--bg-card);
-            padding: 16px 30px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid var(--border);
-        }
-
-        .header-logo {
-            font-size: 1.3em;
-            font-weight: 700;
-            color: var(--accent);
-        }
-
-        .header-nav {
-            display: flex;
-            align-items: center;
-            gap: 20px;
-        }
-
-        .header-nav a {
-            color: var(--text-dim);
-            text-decoration: none;
-            font-size: 0.95em;
-            transition: color 0.2s;
-        }
-
-        .header-nav a:hover { color: var(--text); }
-
-        .user-badge {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 6px 12px;
-            background: var(--bg-input);
-            border-radius: 8px;
+        .page { padding: 40px 0 60px; }
+        .welcome { text-align: center; margin-bottom: 48px; }
+        .welcome h1 { font-size: 1.8em; font-weight: 800; margin-bottom: 8px; }
+        .welcome p { color: var(--text-secondary); font-size: 1.05em; }
+        .section-title {
             font-size: 0.85em;
-        }
-
-        .user-badge .role {
-            color: var(--accent);
             font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 16px;
         }
-
-        .logout-btn {
-            background: none;
-            border: 1px solid var(--red);
-            color: var(--red);
-            padding: 6px 12px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 0.85em;
-            transition: all 0.2s;
-        }
-
-        .logout-btn:hover {
-            background: var(--red);
-            color: white;
-        }
-
-        /* Main */
-        .main {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 40px 30px;
-        }
-
-        .welcome {
-            text-align: center;
-            margin-bottom: 50px;
-        }
-
-        .welcome h1 {
-            font-size: 2em;
-            margin-bottom: 10px;
-        }
-
-        .welcome p {
-            color: var(--text-dim);
-            font-size: 1.1em;
-        }
-
-        /* Scenarios Grid */
-        .scenarios-section h2 {
-            margin-bottom: 20px;
-            color: var(--text-dim);
-        }
-
         .scenarios-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-            gap: 20px;
+            gap: 16px;
+            margin-bottom: 48px;
         }
-
         .scenario-card {
-            background: var(--bg-card);
-            border-radius: 16px;
-            padding: 24px;
-            border: 1px solid var(--border);
-            transition: all 0.2s;
-            cursor: pointer;
+            display: flex;
+            flex-direction: column;
         }
-
-        .scenario-card:hover {
-            border-color: var(--accent);
-            transform: translateY(-2px);
-        }
-
         .scenario-header {
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
-            margin-bottom: 12px;
+            margin-bottom: 10px;
         }
-
-        .scenario-title {
-            font-size: 1.1em;
-            font-weight: 600;
-        }
-
-        .scenario-badge {
-            padding: 4px 10px;
-            border-radius: 6px;
-            font-size: 0.75em;
-            font-weight: 500;
-        }
-
-        .badge-easy { background: rgba(0, 184, 148, 0.2); color: var(--green); }
-        .badge-medium { background: rgba(253, 203, 110, 0.2); color: var(--orange); }
-        .badge-hard { background: rgba(225, 112, 85, 0.2); color: var(--red); }
-
+        .scenario-title { font-size: 1.05em; font-weight: 600; }
         .scenario-desc {
-            color: var(--text-dim);
-            font-size: 0.9em;
+            color: var(--text-secondary);
+            font-size: 0.88em;
             line-height: 1.5;
             margin-bottom: 16px;
+            flex: 1;
         }
-
         .scenario-meta {
             display: flex;
-            gap: 16px;
+            gap: 12px;
             font-size: 0.8em;
-            color: var(--text-dim);
+            color: var(--text-muted);
+            margin-bottom: 16px;
         }
-
-        .scenario-meta span {
+        .scenario-partner {
             display: flex;
             align-items: center;
-            gap: 4px;
-        }
-
-        .scenario-partner {
-            margin-top: 16px;
+            gap: 10px;
             padding-top: 16px;
             border-top: 1px solid var(--border);
-            display: flex;
-            align-items: center;
-            gap: 12px;
+            margin-bottom: 16px;
         }
-
-        .partner-avatar {
-            width: 40px;
-            height: 40px;
+        .partner-avatar-sm {
+            width: 36px;
+            height: 36px;
             border-radius: 50%;
-            background: var(--accent);
+            background: var(--accent-light);
+            color: var(--accent);
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1.2em;
+            font-size: 0.9em;
+            flex-shrink: 0;
         }
-
-        .partner-info {
-            font-size: 0.85em;
-        }
-
-        .partner-name {
-            font-weight: 600;
-        }
-
-        .partner-role {
-            color: var(--text-dim);
-        }
-
-        /* History Section */
-        .history-section {
-            margin-top: 50px;
-        }
-
-        .history-section h2 {
-            margin-bottom: 20px;
-            color: var(--text-dim);
-        }
-
-        .history-empty {
-            text-align: center;
-            padding: 40px;
-            color: var(--text-dim);
-            background: var(--bg-card);
-            border-radius: 12px;
-        }
-
-        /* Start Button */
+        .partner-name { font-weight: 600; font-size: 0.9em; }
+        .partner-role { color: var(--text-muted); font-size: 0.8em; }
         .start-btn {
             width: 100%;
-            padding: 14px;
+            padding: 10px;
             background: var(--accent);
-            border: none;
-            border-radius: 10px;
             color: white;
-            font-size: 1em;
-            font-weight: 600;
-            cursor: pointer;
-            transition: opacity 0.2s;
-            margin-top: 16px;
-        }
-
-        .start-btn:hover { opacity: 0.85; }
-
-        /* AI Generator Section */
-        .ai-section {
-            margin-top: 50px;
-        }
-
-        .ai-section h2 {
-            margin-bottom: 20px;
-            color: var(--text-dim);
-        }
-
-        .ai-generator {
-            background: var(--bg-card);
-            border-radius: 16px;
-            padding: 30px;
-            border: 1px solid var(--border);
-        }
-
-        .ai-generator-header {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 24px;
-        }
-
-        .ai-icon {
-            font-size: 2em;
-        }
-
-        .ai-title {
-            font-size: 1.2em;
-            font-weight: 600;
-        }
-
-        .ai-subtitle {
-            color: var(--text-dim);
+            border: none;
+            border-radius: var(--radius-sm);
             font-size: 0.9em;
+            font-weight: 600;
+            font-family: var(--font);
+            cursor: pointer;
+            transition: all var(--transition);
         }
+        .start-btn:hover { background: var(--accent-hover); }
 
+        /* History */
+        .history-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 48px; }
+        .history-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 14px 16px;
+        }
+        .history-score { font-size: 1.2em; font-weight: 700; }
+
+        /* AI Generator */
         .ai-form {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 20px;
+            gap: 16px;
         }
-
-        .form-group {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-
-        .form-group.full-width {
-            grid-column: 1 / -1;
-        }
-
-        .form-group label {
-            font-size: 0.9em;
-            color: var(--text-dim);
-            font-weight: 500;
-        }
-
-        .form-group input,
-        .form-group select,
-        .form-group textarea {
-            background: var(--bg-input);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 12px 14px;
-            color: var(--text);
-            font-size: 0.95em;
-            font-family: inherit;
-            transition: border-color 0.2s;
-        }
-
-        .form-group input:focus,
-        .form-group select:focus,
-        .form-group textarea:focus {
-            outline: none;
-            border-color: var(--accent);
-        }
-
-        .form-group textarea {
-            resize: vertical;
-            min-height: 80px;
-        }
-
+        .ai-form .full-width { grid-column: 1 / -1; }
         .generate-btn {
             grid-column: 1 / -1;
-            padding: 14px 24px;
-            background: linear-gradient(135deg, var(--accent), #8b5cf6);
-            border: none;
-            border-radius: 10px;
-            color: white;
-            font-size: 1em;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
         }
 
-        .generate-btn:hover {
-            opacity: 0.9;
-            transform: translateY(-1px);
-        }
-
-        .generate-btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            transform: none;
-        }
-
-        .generate-btn .spinner {
-            display: inline-block;
-            width: 16px;
-            height: 16px;
-            border: 2px solid white;
-            border-radius: 50%;
-            border-top-color: transparent;
-            animation: spin 0.8s linear infinite;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        /* Generated Scenario Preview */
-        .generated-preview {
-            margin-top: 24px;
+        /* Preview */
+        .preview {
+            margin-top: 20px;
             padding: 20px;
             background: var(--bg-input);
-            border-radius: 12px;
+            border-radius: var(--radius-sm);
             display: none;
         }
-
-        .generated-preview.show {
-            display: block;
-        }
-
+        .preview.show { display: block; }
         .preview-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 16px;
         }
-
-        .preview-title {
-            font-weight: 600;
-            font-size: 1.1em;
-        }
-
-        .preview-actions {
-            display: flex;
-            gap: 12px;
-        }
-
-        .preview-btn {
-            padding: 8px 16px;
-            border-radius: 8px;
-            border: none;
+        .preview-title { font-weight: 600; }
+        .preview-actions { display: flex; gap: 8px; }
+        .preview-field { margin-bottom: 12px; }
+        .preview-field-label { font-size: 0.8em; color: var(--text-muted); margin-bottom: 2px; }
+        .preview-field-value { font-size: 0.9em; }
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-muted);
             font-size: 0.9em;
-            font-weight: 500;
+        }
+        .mode-btn.active {
+            border-color: var(--accent) !important;
+            background: var(--accent-light) !important;
+            color: var(--accent) !important;
+        }
+        .logout-btn {
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 6px 12px;
+            border-radius: var(--radius-sm);
             cursor: pointer;
-            transition: opacity 0.2s;
+            font-size: 0.8em;
+            font-family: var(--font);
+            transition: all var(--transition);
         }
-
-        .preview-btn-primary {
-            background: var(--accent);
-            color: white;
-        }
-
-        .preview-btn-secondary {
-            background: var(--border);
-            color: var(--text);
-        }
-
-        .preview-btn:hover { opacity: 0.85; }
-
-        .preview-content {
-            color: var(--text-dim);
-            line-height: 1.6;
-        }
-
-        .preview-field {
-            margin-bottom: 12px;
-        }
-
-        .preview-field-label {
-            font-size: 0.85em;
-            color: var(--text);
-            font-weight: 500;
-            margin-bottom: 4px;
-        }
-
-        .preview-field-value {
-            font-size: 0.95em;
-        }
+        .logout-btn:hover { border-color: var(--red); color: var(--red); }
     </style>
 </head>
 <body>
     <header class="header">
-        <div class="header-logo">🎯 Арена переговоров</div>
-        <div class="header-nav">
-            <a href="/dashboard">Сценарии</a>
-            <div class="user-badge">
-                <span id="userLogin">—</span>
-                <span class="role" id="userRole">user</span>
+        <div class="container header-inner">
+            <div class="logo">
+                <div class="logo-icon">🎯</div>
+                Арена переговоров
             </div>
-            <button class="logout-btn" onclick="logout()">Выйти</button>
+            <div class="nav">
+                <a href="/dashboard" class="nav-link">Сценарии</a>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span id="userLogin" style="font-size:0.85em;color:var(--text-secondary)"></span>
+                    <span class="badge" id="userRole" style="background:var(--accent-light);color:var(--accent)"></span>
+                </div>
+                <button class="logout-btn" onclick="logout()">Выйти</button>
+                <button class="theme-toggle" onclick="toggleTheme()">🌓</button>
+            </div>
         </div>
     </header>
 
-    <main class="main">
+    <main class="container page">
         <div class="welcome">
-            <h1>Добро пожаловать!</h1>
-            <p>Выберите сценарий для тренировки переговорных навыков</p>
+            <h1>Выберите сценарий</h1>
+            <p>Тренируйте навыки переговоров с ИИ-оппонентом</p>
         </div>
 
-        <div class="scenarios-section">
-            <h2>📋 Доступные сценарии</h2>
-            <div class="scenarios-grid" id="scenariosGrid">
-                <!-- Загрузятся из API -->
+        <div class="section-title">Доступные сценарии</div>
+        <div style="display:flex;gap:8px;margin-bottom:20px;align-items:center;">
+            <span style="font-size:0.85em;color:var(--text-muted);">Режим:</span>
+            <button class="mode-btn active" data-mode="text" onclick="setMode('text')" style="padding:6px 14px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-card);cursor:pointer;font-family:var(--font);font-size:0.85em;color:var(--text-secondary);transition:all var(--transition);">⌨️ Текст</button>
+            <button class="mode-btn" data-mode="voice" onclick="setMode('voice')" style="padding:6px 14px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-card);cursor:pointer;font-family:var(--font);font-size:0.85em;color:var(--text-secondary);transition:all var(--transition);">🎙️ Голос</button>
+        </div>
+        <div class="scenarios-grid" id="scenariosGrid"></div>
+
+        <div class="section-title">История тренировок</div>
+        <div class="history-list" id="historyList">
+            <div class="empty-state">Пока нет тренировок. Начните первую!</div>
+        </div>
+
+        <div class="section-title">Генератор сценариев</div>
+        <div class="card">
+            <div style="margin-bottom:20px;">
+                <div style="font-weight:600;margin-bottom:4px;">Создайте свой сценарий</div>
+                <div style="color:var(--text-secondary);font-size:0.88em;">Опишите тему — ИИ создаст уникальный сценарий переговоров</div>
             </div>
-        </div>
+            <form class="ai-form" id="aiForm" onsubmit="return generateScenario(event)">
+                <div class="form-group">
+                    <label class="form-label">Тема переговоров *</label>
+                    <input type="text" class="form-input" id="aiTopic" placeholder="Повышение зарплаты, аренда офиса..." required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Сложность</label>
+                    <select class="form-select" id="aiDifficulty">
+                        <option value="Начальная">Начальная</option>
+                        <option value="Средняя" selected>Средняя</option>
+                        <option value="Высокая">Высокая</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Сфера</label>
+                    <select class="form-select" id="aiSphere">
+                        <option>Продажи</option>
+                        <option>HR</option>
+                        <option>Закупки</option>
+                        <option>IT</option>
+                        <option>Другое</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Стиль оппонента</label>
+                    <select class="form-select" id="aiStyle">
+                        <option value="professional">Профессиональный</option>
+                        <option value="aggressive">Агрессивный</option>
+                        <option value="passive">Пассивный</option>
+                    </select>
+                </div>
+                <div class="form-group full-width">
+                    <label class="form-label">Дополнительные детали</label>
+                    <textarea class="form-input" id="aiDetails" rows="3" placeholder="Опишите контекст..." style="resize:vertical"></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary btn-lg generate-btn" id="generateBtn">
+                    <span>✨</span> Сгенерировать
+                </button>
+            </form>
 
-        <div class="history-section">
-            <h2>📖 История тренировок</h2>
-            <div class="history-empty" id="historyEmpty">
-                Пока нет тренировок. Начните первую!
-            </div>
-        </div>
-
-        <div class="ai-section">
-            <h2>🤖 Генератор сценариев</h2>
-            <div class="ai-generator">
-                <div class="ai-generator-header">
-                    <div class="ai-icon">🧠</div>
-                    <div>
-                        <div class="ai-title">Создайте свой сценарий</div>
-                        <div class="ai-subtitle">Нейросеть создаст уникальный сценарий переговоров по вашим параметрам</div>
+            <div class="preview" id="preview">
+                <div class="preview-header">
+                    <div class="preview-title">Сценарий готов</div>
+                    <div class="preview-actions">
+                        <button class="btn btn-ghost btn-sm" onclick="regenerate()">🔄 Заново</button>
+                        <button class="btn btn-primary btn-sm" onclick="startGenerated()">▶ Начать</button>
                     </div>
                 </div>
-
-                <form class="ai-form" id="aiForm">
-                    <div class="form-group">
-                        <label for="aiTopic">Тема переговоров *</label>
-                        <input type="text" id="aiTopic" placeholder="Например: повышение зарплаты, аренда офиса" required />
-                    </div>
-
-                    <div class="form-group">
-                        <label for="aiDifficulty">Сложность</label>
-                        <select id="aiDifficulty">
-                            <option value="Начальная">Начальная (простые переговоры)</option>
-                            <option value="Средняя" selected>Средняя (типовые ситуации)</option>
-                            <option value="Высокая">Высокая (сложные переговоры)</option>
-                        </select>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="aiSphere">Сфера деятельности</label>
-                        <select id="aiSphere">
-                            <option value="Продажи">Продажи</option>
-                            <option value="HR">HR / Персонал</option>
-                            <option value="Закупки">Закупки</option>
-                            <option value="Юриспруденция">Юриспруденция</option>
-                            <option value="Маркетинг">Маркетинг</option>
-                            <option value="IT">IT / Технологии</option>
-                            <option value="Образование">Образование</option>
-                            <option value="Медицина">Медицина</option>
-                            <option value="Другое">Другое</option>
-                        </select>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="aiStyle">Стиль оппонента</label>
-                        <select id="aiStyle">
-                            <option value="professional">Профессиональный</option>
-                            <option value="friendly">Дружелюбный</option>
-                            <option value="aggressive">Агрессивный</option>
-                            <option value="passive">Пассивный</option>
-                            <option value="manipulative">Манипулятивный</option>
-                        </select>
-                    </div>
-
-                    <div class="form-group full-width">
-                        <label for="aiDetails">Дополнительные детали</label>
-                        <textarea id="aiDetails" placeholder="Опишите контекст, особенности ситуации, что важно учесть..."></textarea>
-                    </div>
-
-                    <button type="submit" class="generate-btn" id="generateBtn">
-                        <span>✨</span>
-                        <span>Сгенерировать сценарий</span>
-                    </button>
-                </form>
-
-                <div class="generated-preview" id="generatedPreview">
-                    <div class="preview-header">
-                        <div class="preview-title">📋 Сгенерированный сценарий</div>
-                        <div class="preview-actions">
-                            <button class="preview-btn preview-btn-secondary" onclick="regenerateScenario()">🔄 Заново</button>
-                            <button class="preview-btn preview-btn-primary" onclick="startGeneratedScenario()">▶ Начать</button>
-                        </div>
-                    </div>
-                    <div class="preview-content" id="previewContent">
-                        <!-- Заполнится из API -->
-                    </div>
-                </div>
+                <div id="previewContent"></div>
             </div>
         </div>
     </main>
 
     <script>
-        // ─────────────────────────────────────────────────────────────
-        // Auth Check
-        // ─────────────────────────────────────────────────────────────
-        function getCookie(name) {
-            const match = document.cookie.split(';').find(c => c.trim().startsWith(name + '='));
-            return match ? match.trim().split('=')[1] : null;
-        }
-
+        // Auth
+        function getCookie(n) { const m=document.cookie.split(';').find(c=>c.trim().startsWith(n+'=')); return m?m.trim().split('=')[1]:null; }
         const token = getCookie('token');
-        const role = getCookie('role');
-        const userId = getCookie('userId');
+        if (!token) window.location.href = '/auth';
+        document.getElementById('userLogin').textContent = getCookie('userId') || '';
+        document.getElementById('userRole').textContent = getCookie('role') || 'user';
 
-        if (!token) {
-            window.location.href = '/auth';
-        }
-
-        // Показать роль
-        document.getElementById('userRole').textContent = role || 'user';
-
-        // ─────────────────────────────────────────────────────────────
-        // Logout
-        // ─────────────────────────────────────────────────────────────
         function logout() {
-            document.cookie = 'token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-            document.cookie = 'role=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
-            document.cookie = 'userId=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+            ['token','role','userId'].forEach(c => document.cookie = c+'=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/');
             window.location.href = '/auth';
         }
 
-        // ─────────────────────────────────────────────────────────────
-        // Load Scenarios
-        // ─────────────────────────────────────────────────────────────
+        // Theme
+        function setTheme(t) { document.documentElement.setAttribute('data-theme', t); localStorage.setItem('theme', t); }
+        function toggleTheme() { setTheme(localStorage.getItem('theme') === 'dark' ? 'light' : 'dark'); }
+        setTheme(localStorage.getItem('theme') || 'dark');
+
+        // Mode selector (text/voice)
+        let selectedMode = localStorage.getItem('negotiationMode') || 'text';
+        function setMode(m) {
+            selectedMode = m;
+            localStorage.setItem('negotiationMode', m);
+            document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === m));
+        }
+
+        // Scenarios
         async function loadScenarios() {
             try {
-                const resp = await fetch('/api/scenarios');
-                const scenarios = await resp.json();
+                const r = await fetch('/api/scenarios');
+                const scenarios = await r.json();
                 renderScenarios(scenarios);
-            } catch (e) {
-                console.error('Failed to load scenarios:', e);
-            }
+            } catch(e) { console.error(e); }
         }
 
-        function renderScenarios(scenarios) {
+        function renderScenarios(list) {
             const grid = document.getElementById('scenariosGrid');
-            grid.innerHTML = '';
-
-            scenarios.forEach(s => {
-                const diffClass = s.difficulty === 'Начальная' ? 'easy'
-                    : s.difficulty === 'Средняя' ? 'medium' : 'hard';
-
-                const card = document.createElement('div');
-                card.className = 'scenario-card';
-                card.innerHTML = `
+            if (!list.length) { grid.innerHTML = '<div class="empty-state">Нет доступных сценариев</div>'; return; }
+            grid.innerHTML = list.map(s => {
+                const dc = s.difficulty === 'Начальная' ? 'easy' : s.difficulty === 'Средняя' ? 'medium' : 'hard';
+                return `
+                <div class="card scenario-card animate-in">
                     <div class="scenario-header">
                         <div class="scenario-title">${s.title}</div>
-                        <span class="scenario-badge badge-${diffClass}">${s.difficulty}</span>
+                        <span class="badge badge-${dc}">${s.difficulty}</span>
                     </div>
                     <div class="scenario-desc">${s.description}</div>
                     <div class="scenario-meta">
                         <span>🎯 ${s.sphere}</span>
-                        <span>📊 ${s.difficulty}</span>
                     </div>
                     <div class="scenario-partner">
-                        <div class="partner-avatar">👤</div>
-                        <div class="partner-info">
+                        <div class="partner-avatar-sm">👤</div>
+                        <div>
                             <div class="partner-name">${s.partner_name}</div>
                             <div class="partner-role">${s.partner_role}</div>
                         </div>
                     </div>
                     <button class="start-btn" onclick="startScenario('${s.id}')">Начать переговоры</button>
-                `;
-                grid.appendChild(card);
-            });
+                </div>`;
+            }).join('');
         }
 
-        // ─────────────────────────────────────────────────────────────
-        // Start Scenario
-        // ─────────────────────────────────────────────────────────────
-        async function startScenario(scenarioId) {
+        async function startScenario(id) {
             try {
-                const resp = await fetch('/api/config', {
+                const r = await fetch('/api/config', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        scenario_id: scenarioId,
-                        difficulty: 'Средняя',
-                        mode: 'text',
-                    }),
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({ scenario_id: id, difficulty: 'Средняя', mode: selectedMode })
                 });
-
-                const data = await resp.json();
-                if (data.session_id) {
-                    window.location.href = `/dialogue/${data.session_id}`;
-                }
-            } catch (e) {
-                alert('Ошибка запуска сценария');
-                console.error(e);
-            }
+                const d = await r.json();
+                if (d.session_id) window.location.href = `/dialogue/${d.session_id}`;
+            } catch(e) { alert('Ошибка запуска'); }
         }
 
-        // ─────────────────────────────────────────────────────────────
-        // Init
-        // ─────────────────────────────────────────────────────────────
-        loadScenarios();
-        loadHistory();
-
-        // ─────────────────────────────────────────────────────────────
         // History
-        // ─────────────────────────────────────────────────────────────
         async function loadHistory() {
             try {
-                const resp = await fetch('/api/history');
-                const history = await resp.json();
-                renderHistory(history);
-            } catch (e) {
-                console.error('Failed to load history:', e);
-            }
+                const r = await fetch('/api/history');
+                const h = await r.json();
+                renderHistory(h);
+            } catch(e) {}
         }
 
-        function renderHistory(history) {
-            const container = document.getElementById('historyEmpty');
-            if (!history || history.length === 0) {
-                container.innerHTML = '<p style="color: var(--text-dim); text-align: center;">Пока нет тренировок. Начните первую!</p>';
-                return;
-            }
-
-            let html = '<div class="history-list">';
-            history.forEach(h => {
-                const date = new Date(h.created_at).toLocaleDateString('ru-RU', {
-                    day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
-                });
-                const scoreColor = h.score >= 70 ? '#00b894' : h.score >= 40 ? '#fdcb6e' : '#e17055';
-                html += `
-                    <div class="history-item" style="
-                        background: var(--bg-card);
-                        border-radius: 12px;
-                        padding: 16px 20px;
-                        margin-bottom: 12px;
-                        border: 1px solid var(--border);
-                        display: flex;
-                        justify-content: space-between;
-                        align-items: center;
-                    ">
-                        <div>
-                            <div style="font-weight: 600; margin-bottom: 4px;">${h.ending || 'Тренировка'}</div>
-                            <div style="font-size: 0.85em; color: var(--text-dim);">${date}</div>
-                        </div>
-                        <div style="
-                            font-size: 1.3em;
-                            font-weight: 800;
-                            color: ${scoreColor};
-                        ">${h.score}</div>
-                    </div>
-                `;
-            });
-            html += '</div>';
-            container.innerHTML = html;
+        function renderHistory(list) {
+            const el = document.getElementById('historyList');
+            if (!list || !list.length) return;
+            el.innerHTML = list.map(h => {
+                const d = new Date(h.created_at).toLocaleDateString('ru-RU', {day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+                const c = h.score >= 70 ? 'var(--green)' : h.score >= 40 ? 'var(--orange)' : 'var(--red)';
+                return `<div class="card card-sm history-item"><div><div style="font-weight:600;font-size:0.9em;">${h.ending||'Тренировка'}</div><div style="font-size:0.8em;color:var(--text-muted)">${d}</div></div><div class="history-score" style="color:${c}">${h.score}</div></div>`;
+            }).join('');
         }
 
-        // ─────────────────────────────────────────────────────────────
-        // AI Scenario Generator
-        // ─────────────────────────────────────────────────────────────
+        // AI Generator
         let generatedScenario = null;
 
-        const aiForm = document.getElementById('aiForm');
-        const generateBtn = document.getElementById('generateBtn');
-        const generatedPreview = document.getElementById('generatedPreview');
-        const previewContent = document.getElementById('previewContent');
-
-        aiForm.addEventListener('submit', async (e) => {
+        async function generateScenario(e) {
             e.preventDefault();
-            await generateScenario();
-        });
-
-        async function generateScenario() {
-            const topic = document.getElementById('aiTopic').value.trim();
-            const difficulty = document.getElementById('aiDifficulty').value;
-            const sphere = document.getElementById('aiSphere').value;
-            const style = document.getElementById('aiStyle').value;
-            const details = document.getElementById('aiDetails').value.trim();
-
-            if (!topic) {
-                alert('Введите тему переговоров');
-                return;
-            }
-
-            // Показать загрузку
-            setLoading(true);
-
+            const btn = document.getElementById('generateBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<div class="spinner"></div> Генерирую...';
             try {
-                const resp = await fetch('/api/generate-scenario', {
+                const r = await fetch('/api/generate-scenario', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {'Content-Type':'application/json'},
                     body: JSON.stringify({
-                        topic,
-                        difficulty,
-                        sphere,
-                        opponent_style: style,
-                        details,
-                    }),
-                });
-
-                const data = await resp.json();
-
-                if (data.success && data.scenario) {
-                    generatedScenario = data.scenario;
-                    showPreview(data.scenario);
-                } else {
-                    alert('Ошибка генерации: ' + (data.message || 'Неизвестная ошибка'));
-                }
-            } catch (err) {
-                alert('Ошибка сети: ' + err.message);
-            } finally {
-                setLoading(false);
-            }
-        }
-
-        function setLoading(loading) {
-            if (loading) {
-                generateBtn.disabled = true;
-                generateBtn.innerHTML = '<span class="spinner"></span><span>Генерирую...</span>';
-            } else {
-                generateBtn.disabled = false;
-                generateBtn.innerHTML = '<span>✨</span><span>Сгенерировать сценарий</span>';
-            }
-        }
-
-        function showPreview(scenario) {
-            previewContent.innerHTML = `
-                <div class="preview-field">
-                    <div class="preview-field-label">Название</div>
-                    <div class="preview-field-value">${scenario.title}</div>
-                </div>
-                <div class="preview-field">
-                    <div class="preview-field-label">Описание</div>
-                    <div class="preview-field-value">${scenario.description}</div>
-                </div>
-                <div class="preview-field">
-                    <div class="preview-field-label">Оппонент</div>
-                    <div class="preview-field-value">${scenario.partner_name} — ${scenario.partner_role}</div>
-                </div>
-                <div class="preview-field">
-                    <div class="preview-field-label">Ваша цель</div>
-                    <div class="preview-field-value">${scenario.player_goal}</div>
-                </div>
-                <div class="preview-field">
-                    <div class="preview-field-label">Цель оппонента</div>
-                    <div class="preview-field-value">${scenario.partner_goal}</div>
-                </div>
-                <div class="preview-field">
-                    <div class="preview-field-label">BATNA (ваша)</div>
-                    <div class="preview-field-value">${scenario.player_batna}</div>
-                </div>
-                <div class="preview-field">
-                    <div class="preview-field-label">BATNA (оппонента)</div>
-                    <div class="preview-field-value">${scenario.partner_batna}</div>
-                </div>
-            `;
-            generatedPreview.classList.add('show');
-        }
-
-        function regenerateScenario() {
-            generatedPreview.classList.remove('show');
-            generatedScenario = null;
-            generateScenario();
-        }
-
-        async function startGeneratedScenario() {
-            if (!generatedScenario) {
-                alert('Сначала сгенерируйте сценарий');
-                return;
-            }
-
-            try {
-                // Сохраняем сценарий и запускаем
-                const resp = await fetch('/api/start-generated', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        scenario: generatedScenario,
+                        topic: document.getElementById('aiTopic').value,
                         difficulty: document.getElementById('aiDifficulty').value,
-                        mode: 'text',
-                    }),
+                        sphere: document.getElementById('aiSphere').value,
+                        opponent_style: document.getElementById('aiStyle').value,
+                        details: document.getElementById('aiDetails').value
+                    })
                 });
-
-                const data = await resp.json();
-                if (data.session_id) {
-                    window.location.href = `/dialogue/${data.session_id}`;
+                const d = await r.json();
+                if (d.success && d.scenario) {
+                    generatedScenario = d.scenario;
+                    showPreview(d.scenario);
                 } else {
-                    alert('Ошибка запуска сценария');
+                    alert('Ошибка: ' + (d.message || 'Неизвестная ошибка'));
                 }
-            } catch (err) {
-                alert('Ошибка сети: ' + err.message);
-            }
+            } catch(e) { alert('Ошибка сети'); }
+            btn.disabled = false;
+            btn.innerHTML = '<span>✨</span> Сгенерировать';
+            return false;
         }
+
+        function showPreview(s) {
+            document.getElementById('previewContent').innerHTML = `
+                <div class="preview-field"><div class="preview-field-label">Название</div><div class="preview-field-value">${s.title}</div></div>
+                <div class="preview-field"><div class="preview-field-label">Описание</div><div class="preview-field-value">${s.description}</div></div>
+                <div class="preview-field"><div class="preview-field-label">Оппонент</div><div class="preview-field-value">${s.partner_name} — ${s.partner_role}</div></div>
+                <div class="preview-field"><div class="preview-field-label">BATNA</div><div class="preview-field-value">${s.player_batna}</div></div>
+            `;
+            document.getElementById('preview').classList.add('show');
+        }
+
+        function regenerate() {
+            document.getElementById('preview').classList.remove('show');
+            generatedScenario = null;
+            generateScenario(new Event('submit'));
+        }
+
+        async function startGenerated() {
+            if (!generatedScenario) return;
+            try {
+                const r = await fetch('/api/start-generated', {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({ scenario: generatedScenario, difficulty: 'Средняя', mode: selectedMode })
+                });
+                const d = await r.json();
+                if (d.session_id) window.location.href = `/dialogue/${d.session_id}`;
+            } catch(e) { alert('Ошибка запуска'); }
+        }
+
+        loadScenarios();
+        loadHistory();
+        // Init mode buttons
+        setMode(selectedMode);
     </script>
 </body>
 </html>

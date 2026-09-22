@@ -1,695 +1,456 @@
-{% extends "base.html" %}
-
-{% block title %}Диалог — Арена переговоров{% endblock %}
-
-{% block content %}
-<div class="dialogue-page">
-    <div class="dialogue-header">
-        <div class="partner-info">
-            <img src="{{ partner_avatar }}" alt="Avatar" class="partner-avatar">
-            <div>
-                <h2>{{ partner_name }}</h2>
-                <p>{{ partner_role }}</p>
-            </div>
-        </div>
-        <div class="score-display">
-            <span>Очки: <strong id="currentScore">{{ current_score }}</strong></span>
-            <span class="round-display">Раунд: <strong id="currentRound">1</strong></span>
-        </div>
-    </div>
-
-    <!-- BATNA Info -->
-    <div class="batna-box">
-        <details>
-            <summary>🎯 Ваша BATNA</summary>
-            <p>{{ player_batna }}</p>
-        </details>
-        <details>
-            <summary>🤝 BATNA собеседника</summary>
-            <p>{{ partner_batna }}</p>
-        </details>
-    </div>
-
-    <div class="context-box">
-        <strong>Контекст:</strong> {{ initial_context }}
-    </div>
-
-    <div class="chat-container" id="chatContainer">
-        <div class="message partner-message">
-            <div class="message-content">
-                <p id="partnerText">{{ start_text }}</p>
-            </div>
-        </div>
-    </div>
-
-    <!-- Текстовый режим -->
-    <div class="responses-container" id="responsesContainer">
-        <h3>Выберите ответ:</h3>
-        <div class="responses-list" id="responsesList">
-            <!-- Populated by JS -->
-        </div>
-    </div>
-
-    <!-- Голосовой режим -->
-    <div class="voice-container" id="voiceContainer" style="display:none;">
-        <div class="voice-controls">
-            <button class="voice-btn" id="voiceBtn" onclick="toggleVoice()">
-                <span class="voice-icon">🎙️</span>
-                <span class="voice-label">Нажмите и говорите</span>
-            </button>
-            <div class="voice-status" id="voiceStatus">Готов к записи</div>
-        </div>
-        <div class="voice-options" id="voiceOptions">
-            <p>Или выберите текстовый вариант:</p>
-            <div class="voice-responses" id="voiceResponses"></div>
-        </div>
-    </div>
-
-    <div class="loading" id="loading" style="display:none;">
-        <div class="spinner"></div>
-        <p>Собеседник думает...</p>
-    </div>
-</div>
-
-<script>
-const sessionId = "{{ session_id }}";
-const initialResponses = {{ initial_responses_json | safe }};
-let isProcessing = false;
-let isRecording = false;
-let mediaRecorder = null;
-let audioChunks = [];
-let round = 1;
-
-// ─────────────────────────────────────────────────────────────
-// Текстовый режим
-// ─────────────────────────────────────────────────────────────
-
-function loadResponses(responses) {
-    const list = document.getElementById('responsesList');
-    const voiceList = document.getElementById('voiceResponses');
-    list.innerHTML = '';
-    voiceList.innerHTML = '';
-
-    if (!responses || responses.length === 0) {
-        document.getElementById('responsesContainer').style.display = 'none';
-        document.getElementById('voiceOptions').style.display = 'none';
-        return;
-    }
-
-    document.getElementById('responsesContainer').style.display = 'block';
-    document.getElementById('voiceOptions').style.display = 'block';
-
-    responses.forEach(resp => {
-        // Текстовые кнопки
-        const btn = document.createElement('button');
-        btn.className = 'response-btn';
-        let spinHint = '';
-        if (resp.spin_type && resp.spin_type !== '') {
-            const spinLabels = {
-                'S': '📋 Ситуация',
-                'P': '❓ Проблема',
-                'I': '⚡ Последствия',
-                'N': '✨ Ценность решения'
-            };
-            spinHint = `<span class="spin-tag spin-${resp.spin_type}">${spinLabels[resp.spin_type] || resp.spin_type}</span>`;
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Диалог — Арена переговоров</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .dialogue-page { max-width: 720px; margin: 0 auto; padding: 24px 0; }
+        .dialogue-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            margin-bottom: 16px;
         }
-        let techniqueHints = [];
-        if (resp.focuses_on_interests) techniqueHints.push('Интересы');
-        if (resp.uses_objective_criteria) techniqueHints.push('Объективные критерии');
-        const hintsHtml = techniqueHints.length > 0
-            ? `<span class="technique-hint">${techniqueHints.join(' • ')}</span>`
-            : '';
+        .partner-info { display: flex; align-items: center; gap: 12px; }
+        .partner-avatar {
+            width: 44px; height: 44px;
+            border-radius: 50%;
+            background: var(--accent-light);
+            color: var(--accent);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.1em;
+        }
+        .partner-name { font-weight: 600; font-size: 0.95em; }
+        .partner-role { color: var(--text-muted); font-size: 0.8em; }
+        .score-display { display: flex; gap: 16px; font-size: 0.9em; color: var(--text-secondary); }
+        .score-display strong { color: var(--accent); }
 
-        btn.innerHTML = `
-            <span class="response-text">${resp.text}</span>
-            <span class="response-hint">
-                <span class="strategy-tag strategy-${getStrategyClass(resp.strategy)}">${resp.strategy}</span>
-                ${spinHint}
-                ${hintsHtml}
-            </span>
-        `;
-        btn.onclick = () => selectResponse(resp);
-        list.appendChild(btn);
+        .batna-row { display: flex; gap: 12px; margin-bottom: 16px; }
+        .batna-box {
+            flex: 1;
+            padding: 12px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            font-size: 0.8em;
+        }
+        .batna-box summary { cursor: pointer; font-weight: 600; color: var(--text-secondary); }
+        .batna-box p { margin-top: 6px; color: var(--text-muted); line-height: 1.4; }
 
-        // Голосовые варианты
-        const voiceBtn = document.createElement('button');
-        voiceBtn.className = 'voice-response-btn';
-        voiceBtn.innerHTML = `
-            <span class="strategy-tag strategy-${getStrategyClass(resp.strategy)}">${resp.strategy}</span>
-            ${spinHint}
-            <span class="response-text">${resp.text.substring(0, 80)}...</span>
-        `;
-        voiceBtn.onclick = () => selectResponse(resp);
-        voiceList.appendChild(voiceBtn);
-    });
-}
+        .context-box {
+            padding: 12px 16px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--accent);
+            border-radius: var(--radius-sm);
+            font-size: 0.85em;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+        }
 
-function getStrategyClass(strategy) {
-    if (strategy.includes('Сотрудничество')) return 'collab';
-    if (strategy.includes('Компромисс')) return 'compromise';
-    if (strategy.includes('Конфронтация')) return 'confront';
-    return 'neutral';
-}
+        .chat-container {
+            height: 380px;
+            overflow-y: auto;
+            padding: 20px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            margin-bottom: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .message { display: flex; }
+        .partner-message { justify-content: flex-start; }
+        .player-message { justify-content: flex-end; }
+        .system-message { justify-content: center; }
+        .message-content {
+            max-width: 75%;
+            padding: 10px 14px;
+            border-radius: var(--radius);
+            font-size: 0.9em;
+            line-height: 1.5;
+        }
+        .partner-message .message-content {
+            background: var(--bg-input);
+            color: var(--text);
+            border-bottom-left-radius: 4px;
+        }
+        .player-message .message-content {
+            background: var(--accent);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+        .system-message .message-content {
+            background: transparent;
+            color: var(--text-muted);
+            font-style: italic;
+            font-size: 0.85em;
+        }
 
-async function selectResponse(resp) {
-    if (isProcessing) return;
-    isProcessing = true;
+        .responses-container {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 16px;
+        }
+        .responses-title { font-size: 0.85em; color: var(--text-muted); margin-bottom: 12px; }
+        .responses-list { display: flex; flex-direction: column; gap: 8px; }
+        .response-btn {
+            padding: 12px 14px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--bg-card);
+            cursor: pointer;
+            text-align: left;
+            transition: all var(--transition);
+            color: var(--text);
+            font-size: 0.88em;
+            line-height: 1.4;
+            font-family: var(--font);
+        }
+        .response-btn:hover { border-color: var(--accent); background: var(--accent-light); }
+        .response-text { display: block; margin-bottom: 4px; }
+        .response-hint { display: flex; gap: 6px; flex-wrap: wrap; }
 
-    const chatContainer = document.getElementById('chatContainer');
-    const responsesContainer = document.getElementById('responsesContainer');
-    const voiceContainer = document.getElementById('voiceContainer');
-    const loading = document.getElementById('loading');
+        /* Voice */
+        .voice-container {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px;
+            text-align: center;
+        }
+        .voice-btn {
+            width: 80px; height: 80px;
+            border-radius: 50%;
+            border: 2px solid var(--border);
+            background: var(--bg-card);
+            cursor: pointer;
+            transition: all var(--transition);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 12px;
+            font-size: 1.8em;
+        }
+        .voice-btn:hover { border-color: var(--accent); }
+        .voice-btn.recording {
+            border-color: var(--red);
+            background: rgba(239, 68, 68, 0.1);
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.05)} }
+        .voice-label { font-size: 0.75em; color: var(--text-muted); }
+        .voice-status { color: var(--text-muted); font-size: 0.85em; margin-bottom: 16px; }
+        .voice-options p { color: var(--text-muted); font-size: 0.85em; margin-bottom: 10px; }
+        .voice-responses { display: flex; flex-direction: column; gap: 6px; }
+        .voice-response-btn {
+            padding: 8px 12px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--bg-card);
+            cursor: pointer;
+            text-align: left;
+            color: var(--text);
+            font-size: 0.85em;
+            font-family: var(--font);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .voice-response-btn:hover { border-color: var(--accent); }
 
-    // Добавляем сообщение игрока
-    chatContainer.innerHTML += `
-        <div class="message player-message">
-            <div class="message-content">
-                <p>${resp.text}</p>
-                <span class="strategy-tag strategy-${getStrategyClass(resp.strategy)}">${resp.strategy}</span>
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: var(--text-muted);
+            display: none;
+        }
+        .loading.show { display: block; }
+        .loading .spinner { margin: 0 auto 10px; }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="container header-inner">
+            <a href="/dashboard" class="logo" style="font-size:0.95em;">← Назад</a>
+            <div class="nav">
+                <span style="font-size:0.8em;color:var(--text-muted);">{{ mode }}</span>
+                <button class="theme-toggle" onclick="toggleTheme()">🌓</button>
             </div>
         </div>
-    `;
+    </header>
+    <div class="dialogue-page container">
+        <div class="dialogue-header">
+            <div class="partner-info">
+                <div class="partner-avatar">👤</div>
+                <div>
+                    <div class="partner-name">{{ partner_name }}</div>
+                    <div class="partner-role">{{ partner_role }}</div>
+                </div>
+            </div>
+            <div class="score-display">
+                <span>Очки: <strong id="currentScore">{{ current_score }}</strong></span>
+                <span>Раунд: <strong id="currentRound">1</strong></span>
+            </div>
+        </div>
 
-    // Скрываем варианты, показываем загрузку
-    responsesContainer.style.display = 'none';
-    voiceContainer.style.display = 'none';
-    loading.style.display = 'block';
-    chatContainer.scrollTop = chatContainer.scrollHeight;
+        <div class="batna-row">
+            <details class="batna-box">
+                <summary>🎯 Ваша BATNA</summary>
+                <p>{{ player_batna }}</p>
+            </details>
+            <details class="batna-box">
+                <summary>🤝 BATNA собеседника</summary>
+                <p>{{ partner_batna }}</p>
+            </details>
+        </div>
 
-    try {
-        const response = await fetch(`/api/dialogue/${sessionId}/respond`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                response_id: resp.id,
-                selected_strategy: resp.strategy,
-                is_final: false
-            })
-        });
+        <div class="context-box">
+            <strong>Контекст:</strong> {{ initial_context }}
+        </div>
 
-        if (!response.ok) throw new Error('Server error');
-
-        const data = await response.json();
-
-        // Обновляем очки и раунд
-        document.getElementById('currentScore').textContent = data.current_score;
-        round++;
-        document.getElementById('currentRound').textContent = round;
-
-        // Ждём, затем показываем ответ собеседника
-        await new Promise(r => setTimeout(r, 800));
-
-        chatContainer.innerHTML += `
+        <div class="chat-container" id="chatContainer">
             <div class="message partner-message">
                 <div class="message-content">
-                    <p>${data.partner_text}</p>
+                    <p id="partnerText">{{ start_text }}</p>
                 </div>
             </div>
-        `;
-        chatContainer.scrollTop = chatContainer.scrollHeight;
+        </div>
 
-        // Озвучиваем ответ собеседника (если голосовой режим)
-        if ("{{ mode }}" === 'voice') {
-            await speakText(data.partner_text);
-        }
+        <!-- Text mode -->
+        <div class="responses-container" id="responsesContainer">
+            <div class="responses-title">Выберите ответ:</div>
+            <div class="responses-list" id="responsesList"></div>
+        </div>
 
-        loading.style.display = 'none';
+        <!-- Voice mode -->
+        <div class="voice-container" id="voiceContainer" style="display:none;">
+            <button class="voice-btn" id="voiceBtn" onclick="toggleVoice()">🎙️</button>
+            <div class="voice-label">Нажмите и говорите</div>
+            <div class="voice-status" id="voiceStatus">Готов к записи</div>
+            <div class="voice-options" id="voiceOptions" style="display:none;">
+                <p>Или выберите вариант:</p>
+                <div class="voice-responses" id="voiceResponses"></div>
+            </div>
+        </div>
 
-        if (data.is_final) {
-            chatContainer.innerHTML += `
-                <div class="message system-message">
-                    <div class="message-content">
-                        <p><em>Диалог завершён. Подождите...</em></p>
-                    </div>
-                </div>
-            `;
-            await new Promise(r => setTimeout(r, 2000));
-            window.location.href = `/result/${sessionId}`;
-        } else {
-            if (data.next_node && data.next_node.responses) {
-                loadResponses(data.next_node.responses);
-            }
-            isProcessing = false;
-        }
-    } catch (e) {
-        loading.style.display = 'none';
-        responsesContainer.style.display = 'block';
-        isProcessing = false;
-        console.error('Error:', e);
-        alert('Ошибка. Попробуйте ещё раз.');
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Собеседник думает...</p>
+        </div>
+    </div>
+
+    <script>
+    const sessionId = "{{ session_id }}";
+    const initialResponses = {{ initial_responses_json | safe }};
+    let isProcessing = false;
+    let isRecording = false;
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let round = 1;
+
+    // Theme
+    function setTheme(t) { document.documentElement.setAttribute('data-theme', t); localStorage.setItem('theme', t); }
+    function toggleTheme() { setTheme(localStorage.getItem('theme') === 'dark' ? 'light' : 'dark'); }
+    setTheme(localStorage.getItem('theme') || 'dark');
+
+    // Responses
+    function getStrategyClass(s) {
+        if (s.includes('Сотрудничество')) return 'collab';
+        if (s.includes('Компромисс')) return 'compromise';
+        if (s.includes('Конфронтация')) return 'confront';
+        return '';
     }
-}
 
-// ─────────────────────────────────────────────────────────────
-// Голосовой режим
-// ─────────────────────────────────────────────────────────────
+    const spinLabels = {'S':'📋 Ситуация','P':'❓ Проблема','I':'⚡ Последствия','N':'✨ Ценность'};
 
-async function toggleVoice() {
-    if (isRecording) {
-        stopRecording();
-    } else {
-        startRecording();
-    }
-}
+    function loadResponses(responses) {
+        const list = document.getElementById('responsesList');
+        const vlist = document.getElementById('voiceResponses');
+        list.innerHTML = '';
+        vlist.innerHTML = '';
 
-async function startRecording() {
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder = new MediaRecorder(stream);
-        audioChunks = [];
-
-        mediaRecorder.ondataavailable = (e) => {
-            audioChunks.push(e.data);
-        };
-
-        mediaRecorder.onstop = async () => {
-            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-            await processVoiceInput(audioBlob);
-            stream.getTracks().forEach(t => t.stop());
-        };
-
-        mediaRecorder.start();
-        isRecording = true;
-
-        const btn = document.getElementById('voiceBtn');
-        btn.classList.add('recording');
-        document.getElementById('voiceStatus').textContent = 'Говорите...';
-    } catch (e) {
-        alert('Не удалось получить доступ к микрофону');
-    }
-}
-
-function stopRecording() {
-    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-        mediaRecorder.stop();
-    }
-    isRecording = false;
-
-    const btn = document.getElementById('voiceBtn');
-    btn.classList.remove('recording');
-    document.getElementById('voiceStatus').textContent = 'Обработка...';
-}
-
-async function processVoiceInput(audioBlob) {
-    const loading = document.getElementById('loading');
-    loading.style.display = 'block';
-
-    try {
-        // Отправляем аудио на STT
-        const formData = new FormData();
-        formData.append('file', audioBlob, 'recording.webm');
-
-        const sttResp = await fetch(`/api/dialogue/${sessionId}/stt`, {
-            method: 'POST',
-            body: formData
-        });
-
-        if (!sttResp.ok) throw new Error('STT failed');
-
-        const { text } = await sttResp.json();
-
-        if (!text || text.trim().length === 0) {
-            alert('Речь не распознана. Попробуйте ещё раз.');
-            loading.style.display = 'none';
+        if (!responses || !responses.length) {
+            document.getElementById('responsesContainer').style.display = 'none';
+            document.getElementById('voiceOptions').style.display = 'none';
             return;
         }
 
-        // Ищем лучший вариант ответа
-        const responses = document.querySelectorAll('.voice-response-btn');
-        let bestMatch = null;
-        let bestScore = 0;
+        const isVoiceMode = "{{ mode }}" === 'voice';
+        if (isVoiceMode) {
+            document.getElementById('responsesContainer').style.display = 'none';
+            document.getElementById('voiceOptions').style.display = 'block';
+        } else {
+            document.getElementById('responsesContainer').style.display = 'block';
+        }
 
-        responses.forEach(btn => {
-            const btnText = btn.textContent.toLowerCase();
-            const words = text.toLowerCase().split(/\s+/);
-            let score = 0;
-            words.forEach(w => {
-                if (btnText.includes(w) && w.length > 3) score++;
+        responses.forEach(r => {
+            // Text buttons
+            const btn = document.createElement('button');
+            btn.className = 'response-btn';
+            let hints = '';
+            if (r.spin_type && r.spin_type !== '') hints += `<span class="spin-tag spin-${r.spin_type}">${spinLabels[r.spin_type]||r.spin_type}</span>`;
+            if (r.focuses_on_interests) hints += '<span class="tag tag-collab" style="font-size:0.7em">Интересы</span>';
+            if (r.uses_objective_criteria) hints += '<span class="tag tag-compromise" style="font-size:0.7em">Объективные</span>';
+            btn.innerHTML = `<span class="response-text">${r.text}</span><span class="response-hint"><span class="tag tag-${getStrategyClass(r.strategy)}">${r.strategy}</span>${hints}</span>`;
+            btn.onclick = () => selectResponse(r);
+            list.appendChild(btn);
+
+            // Voice buttons
+            const vb = document.createElement('button');
+            vb.className = 'voice-response-btn';
+            vb.innerHTML = `<span class="tag tag-${getStrategyClass(r.strategy)}">${r.strategy}</span><span style="flex:1">${r.text.substring(0,60)}...</span>`;
+            vb.onclick = () => selectResponse(r);
+            vlist.appendChild(vb);
+        });
+    }
+
+    async function selectResponse(resp) {
+        if (isProcessing) return;
+        isProcessing = true;
+
+        const chat = document.getElementById('chatContainer');
+        const rc = document.getElementById('responsesContainer');
+        const vc = document.getElementById('voiceContainer');
+        const ld = document.getElementById('loading');
+
+        chat.innerHTML += `<div class="message player-message"><div class="message-content"><p>${resp.text}</p><span class="tag tag-${getStrategyClass(resp.strategy)}" style="margin-top:4px;font-size:0.7em">${resp.strategy}</span></div></div>`;
+        rc.style.display = 'none';
+        vc.style.display = 'none';
+        ld.classList.add('show');
+        chat.scrollTop = chat.scrollHeight;
+
+        try {
+            const r = await fetch(`/api/dialogue/${sessionId}/respond`, {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({ response_id: resp.id, selected_strategy: resp.strategy, is_final: false })
             });
-            if (score > bestScore) {
-                bestScore = score;
-                bestMatch = btn;
+            if (!r.ok) throw new Error('Server error');
+            const d = await r.json();
+
+            document.getElementById('currentScore').textContent = d.current_score;
+            round++;
+            document.getElementById('currentRound').textContent = round;
+
+            await new Promise(r => setTimeout(r, 600));
+
+            chat.innerHTML += `<div class="message partner-message"><div class="message-content"><p>${d.partner_text}</p></div></div>`;
+            chat.scrollTop = chat.scrollHeight;
+
+            // Voice playback
+            if ("{{ mode }}" === 'voice') await speakText(d.partner_text);
+
+            ld.classList.remove('show');
+
+            if (d.is_final) {
+                chat.innerHTML += `<div class="message system-message"><div class="message-content"><p>Диалог завершён...</p></div></div>`;
+                await new Promise(r => setTimeout(r, 1500));
+                window.location.href = `/result/${sessionId}`;
+            } else {
+                if (d.next_node && d.next_node.responses) loadResponses(d.next_node.responses);
+                isProcessing = false;
+            }
+        } catch(e) {
+            ld.classList.remove('show');
+            rc.style.display = 'block';
+            isProcessing = false;
+            console.error(e);
+        }
+    }
+
+    // Voice
+    async function toggleVoice() {
+        if (isRecording) stopRecording();
+        else startRecording();
+    }
+
+    async function startRecording() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+            mediaRecorder = new MediaRecorder(stream);
+            audioChunks = [];
+            mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+            mediaRecorder.onstop = async () => {
+                const blob = new Blob(audioChunks, {type:'audio/webm'});
+                await processVoiceInput(blob);
+                stream.getTracks().forEach(t => t.stop());
+            };
+            mediaRecorder.start();
+            isRecording = true;
+            document.getElementById('voiceBtn').classList.add('recording');
+            document.getElementById('voiceStatus').textContent = 'Говорите...';
+        } catch(e) { alert('Нет доступа к микрофону'); }
+    }
+
+    function stopRecording() {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+        isRecording = false;
+        document.getElementById('voiceBtn').classList.remove('recording');
+        document.getElementById('voiceStatus').textContent = 'Обработка...';
+    }
+
+    async function processVoiceInput(blob) {
+        document.getElementById('loading').classList.add('show');
+        try {
+            const fd = new FormData();
+            fd.append('file', blob, 'recording.webm');
+            const r = await fetch(`/api/dialogue/${sessionId}/stt`, { method:'POST', body: fd });
+            if (!r.ok) throw new Error('STT failed');
+            const {text} = await r.json();
+            if (!text || !text.trim()) { alert('Речь не распознана'); return; }
+
+            const btns = document.querySelectorAll('.voice-response-btn');
+            let best = null, bestScore = 0;
+            btns.forEach(b => {
+                const t = b.textContent.toLowerCase();
+                const words = text.toLowerCase().split(/\s+/);
+                let score = 0;
+                words.forEach(w => { if (t.includes(w) && w.length > 3) score++; });
+                if (score > bestScore) { bestScore = score; best = b; }
+            });
+            if (best) best.click();
+            else alert(`Распознано: "${text}". Выберите вариант.`);
+        } catch(e) { alert('Ошибка обработки голоса'); }
+        document.getElementById('loading').classList.remove('show');
+    }
+
+    async function speakText(text) {
+        try {
+            const r = await fetch(`/api/dialogue/${sessionId}/tts`, {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({ text, speaker: 'aidar' })
+            });
+            if (!r.ok) return;
+            const {audio_base64} = await r.json();
+            const bytes = atob(audio_base64);
+            const arr = new Uint8Array(bytes.length);
+            for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+            const audio = new Audio(URL.createObjectURL(new Blob([arr], {type:'audio/wav'})));
+            await audio.play();
+        } catch(e) { console.error('TTS error:', e); }
+    }
+
+        // Init
+        document.addEventListener('DOMContentLoaded', () => {
+            loadResponses(initialResponses);
+            if ("{{ mode }}" === 'voice') {
+                document.getElementById('responsesContainer').style.display = 'none';
+                document.getElementById('voiceContainer').style.display = 'block';
+                document.getElementById('voiceOptions').style.display = 'block';
+                document.getElementById('voiceStatus').textContent = 'Нажмите на микрофон или выберите вариант';
             }
         });
-
-        if (bestMatch) {
-            bestMatch.click();
-        } else {
-            alert(`Распознано: "${text}". Выберите вариант из списка.`);
-        }
-    } catch (e) {
-        console.error('Voice processing error:', e);
-        alert('Ошибка обработки голоса');
-    } finally {
-        loading.style.display = 'none';
-    }
-}
-
-async function speakText(text) {
-    try {
-        const resp = await fetch(`/api/dialogue/${sessionId}/tts`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text, speaker: 'aidar' })
-        });
-
-        if (!resp.ok) return;
-
-        const { audio_base64 } = await resp.json();
-        const audioBytes = atob(audio_base64);
-        const audioArr = new Uint8Array(audioBytes.length);
-        for (let i = 0; i < audioBytes.length; i++) audioArr[i] = audioBytes.charCodeAt(i);
-
-        const audioBlob = new Blob([audioArr], { type: 'audio/wav' });
-        const audioUrl = URL.createObjectURL(audioBlob);
-        const audio = new Audio(audioUrl);
-
-        await audio.play();
-    } catch (e) {
-        console.error('TTS error:', e);
-    }
-}
-
-// ─────────────────────────────────────────────────────────────
-// Инициализация
-// ─────────────────────────────────────────────────────────────
-
-document.addEventListener('DOMContentLoaded', () => {
-    loadResponses(initialResponses);
-
-    // Режим общения из сессии
-    const sessionMode = "{{ mode }}";
-    if (sessionMode === 'voice') {
-        document.getElementById('responsesContainer').style.display = 'none';
-        document.getElementById('voiceContainer').style.display = 'block';
-    }
-});
-</script>
-
-<style>
-.dialogue-page {
-    max-width: 800px;
-    margin: 0 auto;
-}
-
-.dialogue-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 20px;
-    background: var(--surface);
-    border-radius: 10px;
-    margin-bottom: 20px;
-}
-
-.partner-info {
-    display: flex;
-    align-items: center;
-    gap: 15px;
-}
-
-.partner-avatar {
-    width: 60px;
-    height: 60px;
-    border-radius: 50%;
-    background: var(--accent);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    font-size: 1.5em;
-}
-
-.score-display {
-    display: flex;
-    gap: 20px;
-    font-size: 1.1em;
-    color: var(--text);
-}
-
-.round-display {
-    color: var(--text-dim);
-}
-
-.context-box {
-    background: var(--surface);
-    padding: 15px 20px;
-    border-radius: 10px;
-    margin-bottom: 20px;
-    font-size: 0.9em;
-    color: var(--text-dim);
-    border-left: 3px solid var(--accent);
-}
-
-.chat-container {
-    height: 400px;
-    overflow-y: auto;
-    padding: 20px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    margin-bottom: 20px;
-}
-
-.message {
-    margin-bottom: 15px;
-    display: flex;
-}
-
-.partner-message { justify-content: flex-start; }
-.player-message { justify-content: flex-end; }
-.system-message { justify-content: center; }
-
-.message-content {
-    max-width: 70%;
-    padding: 12px 16px;
-    border-radius: 18px;
-    background: var(--surface2);
-    color: var(--text);
-    position: relative;
-}
-
-.player-message .message-content {
-    background: var(--accent);
-    color: white;
-}
-
-.system-message .message-content {
-    background: transparent;
-    color: var(--text-dim);
-    font-style: italic;
-}
-
-/* Стратегии */
-.strategy-tag {
-    display: inline-block;
-    font-size: 0.75em;
-    padding: 3px 8px;
-    border-radius: 4px;
-    margin-top: 5px;
-    font-weight: 500;
-}
-
-.strategy-collab { background: rgba(0, 184, 148, 0.2); color: var(--green); }
-.strategy-compromise { background: rgba(253, 203, 110, 0.2); color: var(--orange); }
-.strategy-confront { background: rgba(225, 112, 85, 0.2); color: var(--red); }
-.strategy-neutral { background: var(--surface2); color: var(--text-dim); }
-
-/* BATNA Info */
-.batna-box {
-    display: flex;
-    gap: 15px;
-    margin-bottom: 20px;
-}
-
-.batna-box details {
-    flex: 1;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 12px 15px;
-    font-size: 0.85em;
-}
-
-.batna-box summary {
-    cursor: pointer;
-    font-weight: 600;
-    color: var(--text);
-}
-
-.batna-box p {
-    margin-top: 8px;
-    color: var(--text-dim);
-    line-height: 1.4;
-}
-
-/* SPIN Tags */
-.spin-tag {
-    display: inline-block;
-    font-size: 0.7em;
-    padding: 2px 6px;
-    border-radius: 4px;
-    font-weight: 500;
-    margin-left: 5px;
-}
-
-.spin-S { background: rgba(116, 185, 255, 0.2); color: #74b9ff; }
-.spin-P { background: rgba(255, 118, 117, 0.2); color: #ff7675; }
-.spin-I { background: rgba(253, 203, 110, 0.2); color: #fdcb6e; }
-.spin-N { background: rgba(0, 184, 148, 0.2); color: #00b894; }
-
-/* Technique Hints */
-.technique-hint {
-    display: inline-block;
-    font-size: 0.65em;
-    color: var(--text-dim);
-    margin-left: 5px;
-    opacity: 0.7;
-}
-
-/* Кнопки ответов */
-.responses-container {
-    background: var(--surface);
-    padding: 20px;
-    border-radius: 10px;
-}
-
-.responses-container h3 {
-    margin-bottom: 15px;
-    color: var(--text);
-}
-
-.responses-list {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
-
-.response-btn {
-    padding: 15px;
-    border: 2px solid var(--border);
-    border-radius: 10px;
-    background: var(--surface2);
-    cursor: pointer;
-    text-align: left;
-    transition: all 0.2s;
-    color: var(--text);
-    font-size: 0.95em;
-    line-height: 1.4;
-}
-
-.response-btn:hover {
-    border-color: var(--accent);
-    background: rgba(108, 92, 231, 0.1);
-}
-
-.response-text {
-    display: block;
-    margin-bottom: 5px;
-}
-
-.response-hint {
-    display: block;
-}
-
-/* Голосовой режим */
-.voice-container {
-    background: var(--surface);
-    padding: 20px;
-    border-radius: 10px;
-}
-
-.voice-controls {
-    text-align: center;
-    margin-bottom: 20px;
-}
-
-.voice-btn {
-    width: 100px;
-    height: 100px;
-    border-radius: 50%;
-    border: 3px solid var(--border);
-    background: var(--surface2);
-    cursor: pointer;
-    transition: all 0.2s;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    margin: 0 auto 10px;
-}
-
-.voice-btn:hover {
-    border-color: var(--accent);
-}
-
-.voice-btn.recording {
-    border-color: var(--red);
-    background: rgba(225, 112, 85, 0.2);
-    animation: pulse 1s infinite;
-}
-
-@keyframes pulse {
-    0%, 100% { transform: scale(1); }
-    50% { transform: scale(1.05); }
-}
-
-.voice-icon { font-size: 2em; }
-.voice-label { font-size: 0.7em; color: var(--text-dim); }
-
-.voice-status {
-    color: var(--text-dim);
-    font-size: 0.9em;
-}
-
-.voice-options p {
-    color: var(--text-dim);
-    margin-bottom: 10px;
-}
-
-.voice-responses {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.voice-response-btn {
-    padding: 10px 15px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface2);
-    cursor: pointer;
-    text-align: left;
-    color: var(--text);
-    font-size: 0.9em;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.voice-response-btn:hover {
-    border-color: var(--accent);
-}
-
-/* Загрузка */
-.loading {
-    text-align: center;
-    padding: 20px;
-    color: var(--text-dim);
-}
-
-.spinner {
-    width: 40px;
-    height: 40px;
-    border: 3px solid var(--border);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-    margin: 0 auto 15px;
-}
-
-@keyframes spin {
-    to { transform: rotate(360deg); }
-}
-</style>
-{% endblock %}
+    </script>
+</body>
+</html>

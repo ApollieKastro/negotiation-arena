@@ -49,7 +49,7 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
     sales_tree.insert("s1_r2".to_string(), DialogueNode {
         id: "s1_r2".to_string(),
         speaker: "partner".to_string(),
-        text: "Хорошо, давайте обсудим объёмы. Какой минимальный заказ вы готовы guarantee при скидке?".to_string(),
+        text: "Хорошо, давайте обсудим объёмы. Какой минимальный заказ вы готовы гарантировать при скидке?".to_string(),
         responses: vec![
             ResponseOption {
                 id: "s1_r2a".to_string(),
@@ -62,7 +62,7 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
             },
             ResponseOption {
                 id: "s1_r2b".to_string(),
-                text: "500 штук — это наш стандарт. При这样的 объёме скидка 10% справедлива.".to_string(),
+                text: "500 штук — это наш стандарт. При таком объёме скидка 10% справедлива.".to_string(),
                 strategy: "Компромисс".to_string(),
                 spin_type: "".to_string(),
                 uses_objective_criteria: true,
@@ -89,7 +89,7 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
             },
             ResponseOption {
                 id: "s1_r2cb".to_string(),
-                text: "15% возможно при объёме от 2000 штук. Это我们的 стандартные условия для крупных клиентов.".to_string(),
+                text: "15% возможно при объёме от 2000 штук. Это наши стандартные условия для крупных клиентов.".to_string(),
                 strategy: "Компромисс".to_string(),
                 spin_type: "N".to_string(),
                 uses_objective_criteria: true,
@@ -116,7 +116,7 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
             },
             ResponseOption {
                 id: "s1_r2fb".to_string(),
-                text: "Хорошо, давайтеMeet halfway — 12% скидки и мы включим сервисное обслуживание.".to_string(),
+                text: "Хорошо, давайте найдём компромисс — 12% скидки и мы включим сервисное обслуживание.".to_string(),
                 strategy: "Компромисс".to_string(),
                 spin_type: "".to_string(),
                 uses_objective_criteria: false,
@@ -134,7 +134,7 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
         responses: vec![
             ResponseOption {
                 id: "s1_r3a".to_string(),
-                text: "Поставка — 2 недели, гарантия 24 месяца. Это стандарт для我们的 клиентов. Как эти условия повлияют на ваш выбор?".to_string(),
+                text: "Поставка — 2 недели, гарантия 24 месяца. Это стандарт для наших клиентов. Как эти условия повлияют на ваш выбор?".to_string(),
                 strategy: "Сотрудничество".to_string(),
                 spin_type: "N".to_string(),
                 uses_objective_criteria: true,
@@ -226,7 +226,7 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
         initial_context: "Вы — менеджер по продажам. Клиент — крупная оптовая компания, заинтересованная в вашем продукте, но считает цену завышенной. Ваш BATNA: найти другого клиента на аналогичный объём. BATNA клиента: обратиться к конкурентам.".to_string(),
         dialogue_tree: sales_tree,
         endings: vec![
-            Ending { id: "win".to_string(), title: "Отличный результат".to_string(), text: "Вы нашли общее язык с клиентом и заключили выгодную сделку!".to_string(), outcome: "Клиент签署 контракт на выгодных условиях".to_string(), min_score: 50 },
+            Ending { id: "win".to_string(), title: "Отличный результат".to_string(), text: "Вы нашли общий язык с клиентом и заключили выгодную сделку!".to_string(), outcome: "Клиент подписывает контракт на выгодных условиях".to_string(), min_score: 50 },
             Ending { id: "partial".to_string(), title: "Частичный успех".to_string(), text: "Переговоры завершились, но не все цели достигнуты.".to_string(), outcome: "Клиент уходит, но оставляет заявку".to_string(), min_score: 20 },
             Ending { id: "fail".to_string(), title: "Неудача".to_string(), text: "Не удалось найти компромисс.".to_string(), outcome: "Клиент уходит к конкурентам".to_string(), min_score: 0 },
         ],
@@ -320,7 +320,7 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
                 spin_type: "N".to_string(),
                 uses_objective_criteria: false,
                 focuses_on_interests: true,
-                tone_impact: 0.3, argument_strength: 0.9, next_node_id: "hr_end".to_string(), score_delta: 20,
+                tone_impact: 0.3, argument_strength: 0.9, next_node_id: "hr_r4".to_string(), score_delta: 20,
             },
             ResponseOption {
                 id: "hr_r3b".to_string(),
@@ -329,7 +329,61 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
                 spin_type: "".to_string(),
                 uses_objective_criteria: true,
                 focuses_on_interests: false,
-                tone_impact: 0.1, argument_strength: 0.6, next_node_id: "hr_end".to_string(), score_delta: 10,
+                tone_impact: 0.1, argument_strength: 0.6, next_node_id: "hr_r4".to_string(), score_delta: 10,
+            },
+        ],
+        is_ending: false, score: 0,
+    });
+
+    hr_tree.insert("hr_r4".to_string(), DialogueNode {
+        id: "hr_r4".to_string(),
+        speaker: "partner".to_string(),
+        text: "Вы хорошо говорите, но мне нужны конкретные примеры. Как вы решали конфликты в команде? Были ли случаи, когда вас критиковали?".to_string(),
+        responses: vec![
+            ResponseOption {
+                id: "hr_r4a".to_string(),
+                text: "Да, был случай: два ведущих разработчика не соглашались по архитектуре. Я организовал совместную сессию, где каждый аргументировал свою позицию. В итоге нашли гибридное решение. Как такие ситуации оцениваются в вашей культуре?".to_string(),
+                strategy: "Сотрудничество".to_string(),
+                spin_type: "S".to_string(),
+                uses_objective_criteria: false,
+                focuses_on_interests: true,
+                tone_impact: 0.3, argument_strength: 0.9, next_node_id: "hr_r5".to_string(), score_delta: 20,
+            },
+            ResponseOption {
+                id: "hr_r4b".to_string(),
+                text: "Конфликты решаю через диалог и компромисс. Важно выслушать обе стороны и найти общее решение.".to_string(),
+                strategy: "Компромисс".to_string(),
+                spin_type: "".to_string(),
+                uses_objective_criteria: false,
+                focuses_on_interests: false,
+                tone_impact: 0.1, argument_strength: 0.6, next_node_id: "hr_r5".to_string(), score_delta: 10,
+            },
+        ],
+        is_ending: false, score: 0,
+    });
+
+    hr_tree.insert("hr_r5".to_string(), DialogueNode {
+        id: "hr_r5".to_string(),
+        speaker: "partner".to_string(),
+        text: "Неплохо. Но у нас есть ещё два кандидата с более выраженным опытом. Что вы можете предложить сразу после найма? Чем вы лучше них?".to_string(),
+        responses: vec![
+            ResponseOption {
+                id: "hr_r5a".to_string(),
+                text: "Я не знаю их сильные стороны, но знаю свои: за последний год я вывел команду из 8 человек на показатели, превышающие план на 30%. Готов привести рекомендации. Какие метрики важны для вас?".to_string(),
+                strategy: "Сотрудничество".to_string(),
+                spin_type: "I".to_string(),
+                uses_objective_criteria: true,
+                focuses_on_interests: true,
+                tone_impact: 0.3, argument_strength: 0.9, next_node_id: "hr_end".to_string(), score_delta: 20,
+            },
+            ResponseOption {
+                id: "hr_r5b".to_string(),
+                text: "Готов приступить к работе сразу. Мой опыт позволяет не тратить время на адаптацию.".to_string(),
+                strategy: "Компромисс".to_string(),
+                spin_type: "".to_string(),
+                uses_objective_criteria: false,
+                focuses_on_interests: false,
+                tone_impact: 0.1, argument_strength: 0.5, next_node_id: "hr_end".to_string(), score_delta: 8,
             },
         ],
         is_ending: false, score: 0,
@@ -355,7 +409,7 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
         initial_context: "Вы — кандидат на должность руководителя IT-отдела. BATNA: оставаться на текущей позиции или принять предложение от другой компании. BATNA компании: найти кандидата изнутри или через рекрутинговое агентство.".to_string(),
         dialogue_tree: hr_tree,
         endings: vec![
-            Ending { id: "hire".to_string(), title: "Оффер получен".to_string(), text: "Вас рекомендуют на должность!".to_string(), outcome: "Оффер с期望 зарплатой".to_string(), min_score: 45 },
+            Ending { id: "hire".to_string(), title: "Оффер получен".to_string(), text: "Вас рекомендуют на должность!".to_string(), outcome: "Оффер с ожидаемой зарплатой".to_string(), min_score: 45 },
             Ending { id: "wait".to_string(), title: "Лист ожидания".to_string(), text: "Решение отложено — сравнивают с другими кандидатами.".to_string(), outcome: "Звонок через неделю".to_string(), min_score: 20 },
             Ending { id: "reject".to_string(), title: "Отказ".to_string(), text: "К сожалению, вы не подходите.".to_string(), outcome: "Письмо с отказом".to_string(), min_score: 0 },
         ],
@@ -395,16 +449,79 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
     renewal_tree.insert("r_r2".to_string(), DialogueNode {
         id: "r_r2".to_string(),
         speaker: "partner".to_string(),
-        text: "Нам важно стабильность. Как рост цен повлияет на我们的 бюджет?".to_string(),
+        text: "Нам важно стабильность. Как рост цен повлияет на наш бюджет? Мы уже потеряли 15% маржи из-за инфляции.".to_string(),
         responses: vec![
             ResponseOption {
                 id: "r_r2a".to_string(),
-                text: "Понимаю. Какой процент бюджета выделяется на我们的 услугу? Если рост критичен, давайте найдём решение.".to_string(),
+                text: "Понимаю. Какой процент бюджета выделяется на наши услуги? Если рост критичен, давайте найдём решение.".to_string(),
                 strategy: "Сотрудничество".to_string(),
                 spin_type: "I".to_string(),
                 uses_objective_criteria: false,
                 focuses_on_interests: true,
-                tone_impact: 0.2, argument_strength: 0.85, next_node_id: "r_end".to_string(), score_delta: 15,
+                tone_impact: 0.2, argument_strength: 0.85, next_node_id: "r_r3".to_string(), score_delta: 15,
+            },
+            ResponseOption {
+                id: "r_r2b".to_string(),
+                text: "Понимаю вашу озабоченность. Давайте посмотрим на рыночные аналоги — рост 20% ниже среднерыночного.".to_string(),
+                strategy: "Компромисс".to_string(),
+                spin_type: "".to_string(),
+                uses_objective_criteria: true,
+                focuses_on_interests: false,
+                tone_impact: 0.1, argument_strength: 0.7, next_node_id: "r_r3".to_string(), score_delta: 10,
+            },
+        ],
+        is_ending: false, score: 0,
+    });
+
+    renewal_tree.insert("r_r3".to_string(), DialogueNode {
+        id: "r_r3".to_string(),
+        speaker: "partner".to_string(),
+        text: "Рыночные аналоги — это одно, но нам нужно обосновать рост руководству. Скидка 10% — это минимум, который я могу согласовать.".to_string(),
+        responses: vec![
+            ResponseOption {
+                id: "r_r3a".to_string(),
+                text: "Давайте зафиксируем: 10% скидки при подписании на 2 года. Это даёт вам предсказуемость, нам — долгосрочный контракт. Как это для вас?".to_string(),
+                strategy: "Сотрудничество".to_string(),
+                spin_type: "N".to_string(),
+                uses_objective_criteria: true,
+                focuses_on_interests: true,
+                tone_impact: 0.3, argument_strength: 0.9, next_node_id: "r_r4".to_string(), score_delta: 15,
+            },
+            ResponseOption {
+                id: "r_r3b".to_string(),
+                text: "5% скидки — наш предел. Но мы добавим бесплатную техподдержку на 6 месяцев. Это компенсирует разницу.".to_string(),
+                strategy: "Компромисс".to_string(),
+                spin_type: "".to_string(),
+                uses_objective_criteria: false,
+                focuses_on_interests: false,
+                tone_impact: 0.0, argument_strength: 0.6, next_node_id: "r_r4".to_string(), score_delta: 8,
+            },
+        ],
+        is_ending: false, score: 0,
+    });
+
+    renewal_tree.insert("r_r4".to_string(), DialogueNode {
+        id: "r_r4".to_string(),
+        speaker: "partner".to_string(),
+        text: "Неплохие аргументы. Но мне нужно время, чтобы согласовать с финансовым отделом. Можете направить коммерческое предложение?".to_string(),
+        responses: vec![
+            ResponseOption {
+                id: "r_r4a".to_string(),
+                text: "Конечно, отправлю сегодня. И дополню: включу SLA с гарантией времени ответа 4 часа. Это покажет руководству нашу серьёзность. Какие ещё вопросы остаются?".to_string(),
+                strategy: "Сотрудничество".to_string(),
+                spin_type: "P".to_string(),
+                uses_objective_criteria: true,
+                focuses_on_interests: true,
+                tone_impact: 0.3, argument_strength: 0.9, next_node_id: "r_end".to_string(), score_delta: 20,
+            },
+            ResponseOption {
+                id: "r_r4b".to_string(),
+                text: "Отправлю до конца дня. Надеюсь, руководство оценит наши условия.".to_string(),
+                strategy: "Компромисс".to_string(),
+                spin_type: "".to_string(),
+                uses_objective_criteria: false,
+                focuses_on_interests: false,
+                tone_impact: 0.1, argument_strength: 0.5, next_node_id: "r_end".to_string(), score_delta: 5,
             },
         ],
         is_ending: false, score: 0,
@@ -456,7 +573,7 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
             },
             ResponseOption {
                 id: "p1_comp".to_string(),
-                text: "Мы готовы пересмотреть цены на 10%. Это我们的 максимальная скидка.".to_string(),
+                text: "Мы готовы пересмотреть цены на 10%. Это наша максимальная скидка.".to_string(),
                 strategy: "Компромисс".to_string(),
                 spin_type: "".to_string(),
                 uses_objective_criteria: true,
@@ -479,7 +596,16 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
                 spin_type: "I".to_string(),
                 uses_objective_criteria: true,
                 focuses_on_interests: true,
-                tone_impact: 0.2, argument_strength: 0.85, next_node_id: "p_end".to_string(), score_delta: 15,
+                tone_impact: 0.2, argument_strength: 0.85, next_node_id: "p_r3".to_string(), score_delta: 15,
+            },
+            ResponseOption {
+                id: "p_r2b".to_string(),
+                text: "TCO-анализ показывает, что наши быстрые сроки экономят вам деньги. Давайте посчитаем совокупные потери от простоя.".to_string(),
+                strategy: "Компромисс".to_string(),
+                spin_type: "".to_string(),
+                uses_objective_criteria: true,
+                focuses_on_interests: false,
+                tone_impact: 0.1, argument_strength: 0.7, next_node_id: "p_r3".to_string(), score_delta: 10,
             },
         ],
         is_ending: false, score: 0,
@@ -488,7 +614,7 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
     procurement_tree.insert("p_r2c".to_string(), DialogueNode {
         id: "p_r2c".to_string(),
         speaker: "partner".to_string(),
-        text: "10% — это мало. Конкурент даёт 15%. Нужно больше.".to_string(),
+        text: "10% — это мало. Конкурент даёт 15%. Нужно больше, иначе тендер будет проигран.".to_string(),
         responses: vec![
             ResponseOption {
                 id: "p_r2ca".to_string(),
@@ -497,7 +623,79 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
                 spin_type: "P".to_string(),
                 uses_objective_criteria: false,
                 focuses_on_interests: true,
-                tone_impact: 0.2, argument_strength: 0.8, next_node_id: "p_end".to_string(), score_delta: 10,
+                tone_impact: 0.2, argument_strength: 0.8, next_node_id: "p_r3c".to_string(), score_delta: 10,
+            },
+        ],
+        is_ending: false, score: 0,
+    });
+
+    procurement_tree.insert("p_r3".to_string(), DialogueNode {
+        id: "p_r3".to_string(),
+        speaker: "partner".to_string(),
+        text: "Неплохие аргументы с TCO. Но мой директор требует скидку. Без неё контракт не подпишут. Как минимум 12%.".to_string(),
+        responses: vec![
+            ResponseOption {
+                id: "p_r3a".to_string(),
+                text: "Давайте так: 8% скидки + приоритетная доставка + расширенная гарантия. Совокупная выгода превышает 12% цены. Как это для руководства?".to_string(),
+                strategy: "Сотрудничество".to_string(),
+                spin_type: "N".to_string(),
+                uses_objective_criteria: true,
+                focuses_on_interests: true,
+                tone_impact: 0.3, argument_strength: 0.9, next_node_id: "p_r4".to_string(), score_delta: 15,
+            },
+        ],
+        is_ending: false, score: 0,
+    });
+
+    procurement_tree.insert("p_r3c".to_string(), DialogueNode {
+        id: "p_r3c".to_string(),
+        speaker: "partner".to_string(),
+        text: "Условия — это хорошо, но бюджет жёсткий. Нужна скидка минимум 13%. Иначе я не смогу оправдать выбор перед руководством.".to_string(),
+        responses: vec![
+            ResponseOption {
+                id: "p_r3ca".to_string(),
+                text: "13% невозможно, но давайте увеличим объём — это даст вам лучшую цену за единицу. Скидка вырастет до 11%. Какой минимальный объём нужен?".to_string(),
+                strategy: "Сотрудничество".to_string(),
+                spin_type: "S".to_string(),
+                uses_objective_criteria: true,
+                focuses_on_interests: true,
+                tone_impact: 0.2, argument_strength: 0.8, next_node_id: "p_r4c".to_string(), score_delta: 12,
+            },
+        ],
+        is_ending: false, score: 0,
+    });
+
+    procurement_tree.insert("p_r4".to_string(), DialogueNode {
+        id: "p_r4".to_string(),
+        speaker: "partner".to_string(),
+        text: "Интересно. Мне нужно показать это директору. Можете оформить коммерческое предложение с расчётом TCO?".to_string(),
+        responses: vec![
+            ResponseOption {
+                id: "p_r4a".to_string(),
+                text: "Конечно, подготовлю до завтра. Включу полный расчёт: цена + доставка + гарантия + стоимость простоя. Это убедит руководство. Есть ли ещё вопросы?".to_string(),
+                strategy: "Сотрудничество".to_string(),
+                spin_type: "".to_string(),
+                uses_objective_criteria: true,
+                focuses_on_interests: true,
+                tone_impact: 0.3, argument_strength: 0.9, next_node_id: "p_end".to_string(), score_delta: 20,
+            },
+        ],
+        is_ending: false, score: 0,
+    });
+
+    procurement_tree.insert("p_r4c".to_string(), DialogueNode {
+        id: "p_r4c".to_string(),
+        speaker: "partner".to_string(),
+        text: "11% при увеличении объёма — это уже серьёзно. Давайте зафиксируем условия в протоколе намерений.".to_string(),
+        responses: vec![
+            ResponseOption {
+                id: "p_r4ca".to_string(),
+                text: "Отлично! Подготовлю протокол сегодня. Зафиксируем объём, цену и сроки. Это первый шаг к долгосрочному сотрудничеству.".to_string(),
+                strategy: "Сотрудничество".to_string(),
+                spin_type: "".to_string(),
+                uses_objective_criteria: true,
+                focuses_on_interests: true,
+                tone_impact: 0.3, argument_strength: 0.9, next_node_id: "p_end".to_string(), score_delta: 15,
             },
         ],
         is_ending: false, score: 0,
@@ -549,7 +747,7 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
             },
             ResponseOption {
                 id: "pp1_comp".to_string(),
-                text: "Эксклюзивность возможна при минимальном объёме закупок. Какой минимум вы готовы guarantee?".to_string(),
+                text: "Эксклюзивность возможна при минимальном объёме закупок. Какой минимум вы готовы гарантировать?".to_string(),
                 strategy: "Компромисс".to_string(),
                 spin_type: "".to_string(),
                 uses_objective_criteria: true,
@@ -563,7 +761,7 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
     partnership_tree.insert("pp_r2".to_string(), DialogueNode {
         id: "pp_r2".to_string(),
         speaker: "partner".to_string(),
-        text: "Мы готовы guarantee объём от 5000 штук в год. Как это соотносится с вашими планами?".to_string(),
+                text: "Мы готовы гарантировать объём от 5000 штук в год. Как это соотносится с вашими планами?".to_string(),
         responses: vec![
             ResponseOption {
                 id: "pp_r2a".to_string(),
@@ -603,7 +801,7 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
         responses: vec![
             ResponseOption {
                 id: "pp_r3a".to_string(),
-                text: "Давайте построимroadmap. Через год — выход на 80% региона, через 3 года — полное покрытие. Какие цели ставите вы?".to_string(),
+                text: "Давайте построим дорожную карту. Через год — выход на 80% региона, через 3 года — полное покрытие. Какие цели ставите вы?".to_string(),
                 strategy: "Сотрудничество".to_string(),
                 spin_type: "N".to_string(),
                 uses_objective_criteria: false,
@@ -719,7 +917,61 @@ pub fn load_scenarios() -> HashMap<String, Scenario> {
                 spin_type: "N".to_string(),
                 uses_objective_criteria: true,
                 focuses_on_interests: true,
+                tone_impact: 0.3, argument_strength: 0.9, next_node_id: "mgmt_r4".to_string(), score_delta: 20,
+            },
+            ResponseOption {
+                id: "m3_comp".to_string(),
+                text: "Давайте устно зафиксируем: 2 человека на 3 недели, потом возврат. Как вам такой вариант?".to_string(),
+                strategy: "Компромисс".to_string(),
+                spin_type: "".to_string(),
+                uses_objective_criteria: false,
+                focuses_on_interests: false,
+                tone_impact: 0.1, argument_strength: 0.6, next_node_id: "mgmt_r4".to_string(), score_delta: 10,
+            },
+        ],
+        is_ending: false, score: 0,
+    });
+
+    mgmt_tree.insert("mgmt_r4".to_string(), DialogueNode {
+        id: "mgmt_r4".to_string(),
+        speaker: "partner".to_string(),
+        text: "Хорошо. Но я хочу быть уверен: если вы забираете людей сейчас, это не повлияет на ваш проект? И что будет, если дедлайн сдвинется?".to_string(),
+        responses: vec![
+            ResponseOption {
+                id: "m4_collab".to_string(),
+                text: "Мой проект выдержит задержку в 1 неделю. Но давайте зафиксируем: через 2 недели — точка возврата. И я попрошу руководство утвердить приоритеты. Как это для вас?".to_string(),
+                strategy: "Сотрудничество".to_string(),
+                spin_type: "I".to_string(),
+                uses_objective_criteria: true,
+                focuses_on_interests: true,
+                tone_impact: 0.3, argument_strength: 0.9, next_node_id: "mgmt_r5".to_string(), score_delta: 15,
+            },
+        ],
+        is_ending: false, score: 0,
+    });
+
+    mgmt_tree.insert("mgmt_r5".to_string(), DialogueNode {
+        id: "mgmt_r5".to_string(),
+        speaker: "partner".to_string(),
+        text: "Давайте зафиксируем сроки. Через 3 недели — точка. Иначе эскалация руководству. Вы согласны на такой формат?".to_string(),
+        responses: vec![
+            ResponseOption {
+                id: "m5_collab".to_string(),
+                text: "Согласен. 3 недели — справедливый срок. Давайте подпишем соглашение сегодня, чтобы всё было прозрачно. Какие задачи делегируете первыми?".to_string(),
+                strategy: "Сотрудничество".to_string(),
+                spin_type: "S".to_string(),
+                uses_objective_criteria: true,
+                focuses_on_interests: true,
                 tone_impact: 0.3, argument_strength: 0.9, next_node_id: "mgmt_end".to_string(), score_delta: 20,
+            },
+            ResponseOption {
+                id: "m5_comp".to_string(),
+                text: "3 недели — максимум. Давайте зафиксируем письменно. Надеюсь, это решит проблему обеих команд.".to_string(),
+                strategy: "Компромисс".to_string(),
+                spin_type: "".to_string(),
+                uses_objective_criteria: true,
+                focuses_on_interests: false,
+                tone_impact: 0.1, argument_strength: 0.6, next_node_id: "mgmt_end".to_string(), score_delta: 10,
             },
         ],
         is_ending: false, score: 0,
@@ -781,22 +1033,30 @@ pub async fn generate_partner_response_ai(
     }
 
     let prompt = format!(
-        r#"Ты играешь роль собеседника в деловых переговорах.
+        r#"Ты играешь роль живого человека в деловых переговорах. Ты — реальный человек со своими интересами, эмоциями и ограничениями.
 
 РОЛЬ: {partner_name}, {partner_role}
 КОНТЕКСТ: {scenario_context}
 
+ПРАВИЛА ПОВЕДЕНИЯ (ты — живой человек, а не робот):
+- Ты защищаешь свои интересы, но ТЫ ЧЕЛОВЕК, а не машина. У тебя есть свои проблемы и ограничения.
+- Не соглашайся слишком быстро — тебе нужно сохранить лицо перед начальством. Но и не будь упрямым до абсурда.
+- Реагируй на аргументы собеседника: если он прав — признай это, но предложи свои условия.
+- Если собеседник предлагает что-то выгодное — покажи заинтересованность, но попрось чуть больше.
+- Используй фразы живого человека: «Хм, надо подумать», «Смотря что именно», «Мне нужно согласовать с руководством».
+- Давление через конкурентов допустимо, но только 1-2 раза за диалог, не больше.
+- Тон: уверенный деловой, местами дружелюбный, местами настойчивый. Без агрессии.
+
 СТИЛЬ ОТВЕТА:
-- Говори только на РУССКОМ языке. Никаких иностранных символов, китайского, английского.
-- Отвечай кратко: 1-3 предложения, как в реальном разговоре.
-- Будь живым, естественным собеседником, а не роботом.
-- Реагируй на конкретные слова собеседника.
-- Сохраняй позицию и интересы своей роли.
-- Не соглашайся слишком быстро — веди переговоры.
+- Говори ТОЛЬКО на русском языке.
+- 2-4 предложения, как в реальном разговоре по телефону.
+- Реагируй на КОНКРЕТНЫЕ слова собеседника, а не отвечай шаблоном.
+- Если собеседник задал вопрос — ответь на него, а не уходи в сторону.
+- Используй разговорные конструкции: «Понимаю», «Давайте так», «Смотрите».
 
-{dialogue_history}Игрок говорит: «{player_text}»
+{dialogue_history}Собеседник говорит: «{player_text}»
 
-Ответь как {partner_name}. ТОЛЬКО текст ответа, без кавычек и пояснений:"#,
+Твой ответ как {partner_name} (2-4 предложения, живой язык): "#,
         partner_name = partner_name,
         partner_role = partner_role,
         scenario_context = scenario_context,
@@ -805,13 +1065,13 @@ pub async fn generate_partner_response_ai(
     );
 
     let body = serde_json::json!({
-        "model": "qwen/qwen3.8-27b",
+        "model": "meta-llama/llama-3.3-70b-versatile",
         "messages": [
-            {"role": "system", "content": "Ты — профессиональный актёр, играющий роль делового собеседника. Отвечай ТОЛЬКО на русском языке. Никаких других языков. Будь живым и естественным."},
+            {"role": "system", "content": "Ты играешь роль реального человека в деловых переговорах. Ты — живой, с характером, с интересами. Отвечай ТОЛЬКО на русском языке. Говори как человек, а не как ИИ. Реагируй на конкретные аргументы собеседника. 2-4 предложения."},
             {"role": "user", "content": prompt}
         ],
-        "temperature": 0.8,
-        "max_tokens": 200
+        "temperature": 0.85,
+        "max_tokens": 350
     });
 
     let resp = client.post("https://api.groq.com/openai/v1/chat/completions")

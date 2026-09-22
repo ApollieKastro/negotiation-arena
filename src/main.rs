@@ -948,7 +948,7 @@ async fn generate_scenario(
     let client = reqwest::Client::new();
 
     let body = serde_json::json!({
-        "model": "qwen/qwen3.8-27b",
+        "model": "meta-llama/llama-3.3-70b-versatile",
         "messages": [
             {"role": "system", "content": "Ты - профессиональный создатель сценариев для тренировки переговоров. Создавай реалистичные, детализированные сценарии. Отвечай строго в формате JSON, без markdown-обертки."},
             {"role": "user", "content": prompt}

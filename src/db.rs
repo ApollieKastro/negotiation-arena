@@ -213,7 +213,7 @@ impl Store {
         // Настройки по умолчанию
         let defaults = vec![
             ("llm_provider", "groq", "Провайдер LLM"),
-            ("llm_model", "qwen/qwen3.8-27b", "Модель LLM"),
+            ("llm_model", "meta-llama/llama-3.3-70b-versatile", "Модель LLM"),
             ("tts_url", "http://127.0.0.1:8080", "URL TTS сервера"),
             ("max_turns", "10", "Максимум ходов в диалоге"),
             ("default_difficulty", "Средняя", "Уровень сложности по умолчанию"),

@@ -1,10 +1,32 @@
-use reqwest::Client;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Serialize};
+use std::process::Command;
 use tracing::info;
 
-const SILERO_URL: &str = "http://127.0.0.1:8080";
+// ─────────────────────────────────────────────────────────────
+// Пути к Python-скриптам
+// ─────────────────────────────────────────────────────────────
+
+fn scripts_dir() -> String {
+    // scripts/ рядом с src/ в корне проекта
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    format!("{}/scripts", manifest_dir)
+}
+
+fn python_bin() -> String {
+    // .venv/bin/python3 рядом с проектом
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    format!("{}/.venv/bin/python3", manifest_dir)
+}
+
+fn tts_script() -> String {
+    format!("{}/tts.py", scripts_dir())
+}
+
+fn stt_script() -> String {
+    format!("{}/stt.py", scripts_dir())
+}
 
 // ─────────────────────────────────────────────────────────────
 // Типы
@@ -27,67 +49,89 @@ pub struct SttResponse {
 }
 
 // ─────────────────────────────────────────────────────────────
-// TTS: текст → аудио (WAV)
+// TTS: текст → аудио (WAV base64)
+// Вызывает Python-скрипт с Piper TTS
 // ─────────────────────────────────────────────────────────────
 
-pub async fn text_to_speech(text: &str, speaker: &str) -> Result<String, String> {
-    let client = Client::new();
+pub async fn text_to_speech(text: &str, _speaker: &str) -> Result<String, String> {
+    let text_owned = text.to_string();
 
-    let form = reqwest::multipart::Form::new()
-        .text("text", text.to_string())
-        .text("speaker", speaker.to_string())
-        .text("sample_rate", "24000")
-        .text("normalize", "true")
-        .text("postprocess", "true");
+    // Выполняем в blocking thread чтобы не блокировать async runtime
+    let wav_bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        let output = Command::new(python_bin())
+            .arg(tts_script())
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("Failed to spawn TTS process: {}", e))?;
 
-    let resp = client.post(format!("{}/tts", SILERO_URL))
-        .multipart(form)
-        .send()
-        .await
-        .map_err(|e| format!("TTS request failed: {}", e))?;
+        // Пишем текст в stdin
+        if let Some(ref mut stdin) = output.stdin.as_ref() {
+            use std::io::Write;
+            stdin.write_all(text_owned.as_bytes())
+                .map_err(|e| format!("Failed to write to TTS stdin: {}", e))?;
+        }
 
-    if !resp.status().is_success() {
-        return Err(format!("TTS error: {}", resp.status()));
-    }
+        let result = output.wait_with_output()
+            .map_err(|e| format!("TTS process failed: {}", e))?;
 
-    let audio_bytes = resp.bytes().await
-        .map_err(|e| format!("TTS read failed: {}", e))?;
+        if !result.status.success() {
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            return Err(format!("TTS error: {}", stderr));
+        }
 
-    let b64 = BASE64.encode(&audio_bytes);
-    info!("TTS: '{}' → {} bytes audio", &text[..text.len().min(40)], audio_bytes.len());
+        Ok(result.stdout)
+    })
+    .await
+    .map_err(|e| format!("TTS task failed: {}", e))?;
+
+    let wav = wav_bytes?;
+    let b64 = BASE64.encode(&wav);
+    let preview = if text.len() > 40 { &text[..40] } else { text };
+    info!("TTS: '{}' → {} bytes audio", preview, wav.len());
     Ok(b64)
 }
 
 // ─────────────────────────────────────────────────────────────
 // STT: аудио (bytes) → текст
+// Вызывает Python-скрипт с faster-whisper
 // ─────────────────────────────────────────────────────────────
 
-pub async fn speech_to_text(audio_bytes: Vec<u8>, filename: &str) -> Result<String, String> {
-    let client = Client::new();
+pub async fn speech_to_text(audio_bytes: Vec<u8>, _filename: &str) -> Result<String, String> {
+    // Выполняем в blocking thread чтобы не блокировать async runtime
+    let text = tokio::task::spawn_blocking(move || -> Result<String, String> {
+        let output = Command::new(python_bin())
+            .arg(stt_script())
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("Failed to spawn STT process: {}", e))?;
 
-    let part = reqwest::multipart::Part::bytes(audio_bytes)
-        .file_name(filename.to_string())
-        .mime_str("audio/webm")
-        .map_err(|e| format!("MIME error: {}", e))?;
+        // Пишем аудио-данные в stdin
+        if let Some(ref mut stdin) = output.stdin.as_ref() {
+            use std::io::Write;
+            stdin.write_all(&audio_bytes)
+                .map_err(|e| format!("Failed to write to STT stdin: {}", e))?;
+        }
 
-    let form = reqwest::multipart::Form::new()
-        .part("file", part);
+        let result = output.wait_with_output()
+            .map_err(|e| format!("STT process failed: {}", e))?;
 
-    let resp = client.post(format!("{}/stt", SILERO_URL))
-        .multipart(form)
-        .send()
-        .await
-        .map_err(|e| format!("STT request failed: {}", e))?;
+        if !result.status.success() {
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            return Err(format!("STT error: {}", stderr));
+        }
 
-    if !resp.status().is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("STT error: {}", body));
-    }
+        let text = String::from_utf8_lossy(&result.stdout).trim().to_string();
+        Ok(text)
+    })
+    .await
+    .map_err(|e| format!("STT task failed: {}", e))?;
 
-    let result: serde_json::Value = resp.json().await
-        .map_err(|e| format!("STT parse failed: {}", e))?;
-
-    let text = result["text"].as_str().unwrap_or("").to_string();
-    info!("STT: audio → '{}'", &text[..text.len().min(60)]);
-    Ok(text)
+    let recognized = text?;
+    let preview = if recognized.len() > 60 { &recognized[..60] } else { &recognized };
+    info!("STT: audio → '{}'", preview);
+    Ok(recognized)
 }
