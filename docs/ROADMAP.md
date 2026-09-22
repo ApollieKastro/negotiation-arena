@@ -50,14 +50,17 @@
 
 **Проверки:** `cargo fmt --check` ✅ · `cargo clippy -- -D warnings` ✅ · `cargo test` ✅ (26 тестов)
 
-### Этап 2. Провайдеры ИИ — `[ ]`
-- [ ] Адаптеры: OpenAI-совместимый (chat/stt/tts)
-- [ ] Адаптеры: Anthropic, Google Gemini
-- [ ] Локальные: whisper.cpp/faster-whisper (STT), Piper/Silero (TTS)
-- [ ] Облачные STT/TTS: OpenAI, Groq, ElevenLabs, Deepgram
-- [ ] Discovery моделей по API-ключу, тест соединения
-- [ ] Шифрование ключей, маскирование в UI
-- [ ] Менеджер локальных моделей (скачивание/удаление/список)
+### Этап 2. Провайдеры ИИ — `[x]` выполнен
+- [x] Адаптеры: OpenAI-совместимый (chat/stt/tts)
+- [x] Адаптеры: Anthropic, Google Gemini
+- [~] Локальные: whisper.cpp/faster-whisper (STT), Piper/Silero (TTS) — *каталог и менеджер готовы, запуск бинарников на этапе 7*
+- [x] Облачные STT/TTS: OpenAI, Groq, ElevenLabs, Deepgram
+- [x] Discovery моделей по API-ключу, тест соединения
+- [x] Шифрование ключей, маскирование в UI
+- [x] Менеджер локальных моделей (скачивание/удаление/список)
+- [x] Фабрика провайдеров: `Provider` + расшифрованный ключ → `ProviderHandle`
+
+**Проверки:** `cargo fmt --check` ✅ · `cargo clippy -- -D warnings` ✅ · `cargo test` ✅ (76 тестов)
 
 ### Этап 3. Прикладные сервисы — `[ ]`
 - [ ] AuthService + RBAC без дыр (JWT, роли, права)
@@ -105,3 +108,4 @@
 | 2026-09-22 | 0 | Ветки `dev` + `feature/stage-0-foundation`, WIP сохранён в `legacy/wip`, план зафиксирован |
 | 2026-09-22 | 0 | Слоистая структура, config/error/логирование, миграции (5), AES-256-GCM, порты провайдеров, `/health`, CI; fmt/clippy/test зелёные, дымовой тест пройден |
 | 2026-09-22 | 1 | Сущности домена, порты репозиториев, SQLite-реализации, сиды (admin + 6 сценариев), сервисы analysis/scoring, Argon2id, миграция 0006; 26 тестов зелёные |
+| 2026-09-22 | 2 | Порты LLM/STT/TTS/каталога, адаптеры OpenAI-compat/Anthropic/Gemini/ElevenLabs/Deepgram, локальный менеджер моделей, фабрика `ProviderHandle`, ProviderKind + elevenlabs/deepgram; 76 тестов зелёные |

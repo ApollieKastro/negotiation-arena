@@ -19,7 +19,11 @@ pub mod gemini;
 pub mod local;
 pub mod openai_compat;
 
+// Реэкспорт фабрики и локального менеджера — для composition root
+// и админских сервисов (задействуются с этапов 3–5).
+#[allow(unused_imports)]
 pub use factory::{ProviderFactory, ProviderHandle};
+#[allow(unused_imports)]
 pub use local::{LocalModelFile, LocalModelManager};
 
 use crate::error::{AppError, AppResult};
@@ -81,7 +85,10 @@ pub(crate) fn transport_error(provider: &str, err: reqwest::Error) -> AppError {
 }
 
 /// Читает JSON-тело успешного ответа; не-JSON — ошибка провайдера.
-pub(crate) async fn read_json(provider: &str, response: reqwest::Response) -> AppResult<serde_json::Value> {
+pub(crate) async fn read_json(
+    provider: &str,
+    response: reqwest::Response,
+) -> AppResult<serde_json::Value> {
     response
         .json::<serde_json::Value>()
         .await
@@ -97,7 +104,9 @@ pub(crate) mod testkit {
             .expect("bind мок-сервера");
         let addr = listener.local_addr().expect("addr мок-сервера");
         tokio::spawn(async move {
-            axum::serve(listener, router).await.expect("serve мок-сервера");
+            axum::serve(listener, router)
+                .await
+                .expect("serve мок-сервера");
         });
         format!("http://{addr}")
     }
@@ -119,7 +128,10 @@ mod tests {
     #[test]
     fn extract_error_from_openai_shape() {
         let body = r#"{"error":{"message":"Invalid API key","type":"auth"}}"#;
-        assert_eq!(extract_error_message(body).as_deref(), Some("Invalid API key"));
+        assert_eq!(
+            extract_error_message(body).as_deref(),
+            Some("Invalid API key")
+        );
     }
 
     #[test]
