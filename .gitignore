@@ -1,9 +1,25 @@
 # Environment
 .env
+.env.local
 
 # Rust
 /target/
-Cargo.lock
+
+# Python virtualenv
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Local AI models (large binaries, downloaded at runtime)
+/models/
+*.onnx
+*.gguf
+*.bin
+*.pt
+
+# Build output / static bundle
+/dist/
 
 # Database
 *.db
