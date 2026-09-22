@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::application::Services;
 use crate::config::AppConfig;
 use crate::infrastructure::{crypto::SecretCipher, db::Database};
 
@@ -10,4 +11,6 @@ pub struct AppState {
     pub config: Arc<AppConfig>,
     pub db: Arc<Database>,
     pub cipher: Arc<SecretCipher>,
+    /// Прикладные сервисы (auth, scenarios, sessions, stats, settings, providers).
+    pub services: Arc<Services>,
 }

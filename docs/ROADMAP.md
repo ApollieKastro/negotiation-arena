@@ -62,12 +62,16 @@
 
 **Проверки:** `cargo fmt --check` ✅ · `cargo clippy -- -D warnings` ✅ · `cargo test` ✅ (76 тестов)
 
-### Этап 3. Прикладные сервисы — `[ ]`
-- [ ] AuthService + RBAC без дыр (JWT, роли, права)
-- [ ] ScenarioService (CRUD, импорт/экспорт, ИИ-генератор)
-- [ ] SessionService (диалог, скоринг, анализ, финал)
-- [ ] StatsService (статистика пользователей, активность, лидерборд)
-- [ ] SettingsService (глобальные + пользовательские настройки)
+### Этап 3. Прикладные сервисы — `[x]` выполнен
+- [x] AuthService + RBAC без дыр (JWT, роли, права)
+- [x] ScenarioService (CRUD, импорт/экспорт, ИИ-генератор)
+- [x] SessionService (диалог, скоринг, анализ, финал)
+- [x] StatsService (статистика пользователей, активность, лидерборд)
+- [x] SettingsService (глобальные + пользовательские настройки)
+- [x] ProviderService (CRUD ключей, discovery, назначение ролей LLM/STT/TTS)
+- [x] Сборка `Services` в composition root, `AppState.services`
+
+**Проверки:** `cargo fmt --check` · `cargo clippy -- -D warnings` · `cargo test`
 
 ### Этап 4. HTTP API — `[ ]`
 - [ ] Роуты admin/user, версионирование `/api/v1`
@@ -109,3 +113,4 @@
 | 2026-09-22 | 0 | Слоистая структура, config/error/логирование, миграции (5), AES-256-GCM, порты провайдеров, `/health`, CI; fmt/clippy/test зелёные, дымовой тест пройден |
 | 2026-09-22 | 1 | Сущности домена, порты репозиториев, SQLite-реализации, сиды (admin + 6 сценариев), сервисы analysis/scoring, Argon2id, миграция 0006; 26 тестов зелёные |
 | 2026-09-22 | 2 | Порты LLM/STT/TTS/каталога, адаптеры OpenAI-compat/Anthropic/Gemini/ElevenLabs/Deepgram, локальный менеджер моделей, фабрика `ProviderHandle`, ProviderKind + elevenlabs/deepgram; 76 тестов зелёные |
+| 2026-09-22 | 3 | Прикладные сервисы: AuthService+RBAC/JWT, Scenario (CRUD/import/AI-gen), Session (диалог+скоринг+финиш), Stats, Settings, Provider (ключи/роли); `Services` в `AppState`; 113 тестов зелёные |

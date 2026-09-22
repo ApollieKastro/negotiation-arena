@@ -51,10 +51,14 @@ async fn main() -> AppResult<()> {
         &config.security.encryption_secret,
     )?);
 
+    let repos = Arc::new(infrastructure::db::repos::SqliteRepos::new(db.clone()));
+    let services = Arc::new(application::Services::new(&config, repos, cipher.clone())?);
+
     let state = AppState {
         config: Arc::new(config.clone()),
         db,
         cipher,
+        services,
     };
 
     let app = routes::build(state);
