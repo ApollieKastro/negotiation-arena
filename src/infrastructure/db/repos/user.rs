@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use rusqlite::{params, OptionalExtension, Row};
 
-use crate::domain::entities::user::{User, UserRole, UserWithSecret};
+use crate::domain::entities::user::{LoginAttemptUpdate, User, UserRole, UserWithSecret};
 use crate::domain::ports::UserRepository;
 use crate::error::AppResult;
 use crate::infrastructure::db::Database;
@@ -72,17 +72,31 @@ impl UserRepository for SqliteUserRepo {
 
     fn by_login(&self, login: &str) -> AppResult<Option<UserWithSecret>> {
         let conn = self.db.conn();
-        let sql = "SELECT id, login, display_name, role, is_active, created_at, password_hash
+        let sql = "SELECT id, login, display_name, role, is_active, created_at, password_hash,
+             failed_login_count, last_failed_login_at, locked_until
              FROM users WHERE login = ?1";
         let row = conn
-            .query_row(&sql, params![login], |row| {
-                Ok((Self::map_row(row)?, row.get::<_, String>(6)?))
+            .query_row(sql, params![login], |row| {
+                Ok((
+                    Self::map_row(row)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                    row.get::<_, Option<String>>(9)?,
+                ))
             })
             .optional()?;
-        Ok(row.map(|(user, password_hash)| UserWithSecret {
-            user,
-            password_hash,
-        }))
+        Ok(row.map(
+            |(user, password_hash, failed_login_count, last_failed_login_at, locked_until)| {
+                UserWithSecret {
+                    user,
+                    password_hash,
+                    failed_login_count,
+                    last_failed_login_at,
+                    locked_until,
+                }
+            },
+        ))
     }
 
     fn list(&self) -> AppResult<Vec<User>> {
@@ -124,5 +138,105 @@ impl UserRepository for SqliteUserRepo {
         let conn = self.db.conn();
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))?;
         Ok(count.max(0) as u64)
+    }
+
+    fn record_login_failure(
+        &self,
+        id: &str,
+        window_secs: u64,
+        max_failures: u32,
+        lockout_secs: u64,
+    ) -> AppResult<LoginAttemptUpdate> {
+        // Текущее состояние читаем в той же транзакции, что и UPDATE,
+        // чтобы параллельные попытки не теряли инкремент.
+        let conn = self.db.conn();
+        let tx = conn.unchecked_transaction()?;
+
+        let current: (i64, Option<String>) = tx
+            .query_row(
+                "SELECT failed_login_count, last_failed_login_at FROM users WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?
+            .ok_or_else(|| crate::error::AppError::NotFound("пользователь не найден".into()))?;
+
+        let now = chrono::Utc::now();
+        let now_str = now.to_rfc3339();
+        let last = current
+            .1
+            .as_deref()
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| dt.with_timezone(&chrono::Utc));
+
+        // Окно истекло (или первая попытка) — сбрасываем счётчик.
+        let in_window = last.is_some_and(|t| (now - t).num_seconds().max(0) as u64 <= window_secs);
+        let failed = if in_window {
+            current.0.saturating_add(1)
+        } else {
+            1
+        };
+
+        let locked_until = if max_failures > 0 && failed >= i64::from(max_failures) {
+            Some((now + chrono::Duration::seconds(lockout_secs as i64)).to_rfc3339())
+        } else {
+            None
+        };
+
+        tx.execute(
+            "UPDATE users
+             SET failed_login_count = ?1,
+                 last_failed_login_at = ?2,
+                 locked_until = ?3,
+                 updated_at = ?2
+             WHERE id = ?4",
+            params![failed, now_str, locked_until, id],
+        )?;
+        tx.commit()?;
+
+        Ok(LoginAttemptUpdate {
+            failed_login_count: failed,
+            last_failed_login_at: now_str,
+            locked_until,
+        })
+    }
+
+    fn clear_login_failures(&self, id: &str) -> AppResult<()> {
+        let conn = self.db.conn();
+        conn.execute(
+            "UPDATE users
+             SET failed_login_count = 0,
+                 last_failed_login_at = NULL,
+                 locked_until = NULL,
+                 updated_at = ?1
+             WHERE id = ?2",
+            params![chrono::Utc::now().to_rfc3339(), id],
+        )?;
+        Ok(())
+    }
+
+    fn mark_refresh_jti_used(
+        &self,
+        jti: &str,
+        user_id: &str,
+        purge_after: &str,
+    ) -> AppResult<bool> {
+        let conn = self.db.conn();
+        let inserted = conn.execute(
+            "INSERT INTO used_refresh_jtis (jti, user_id, purge_after)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(jti) DO NOTHING",
+            params![jti, user_id, purge_after],
+        )?;
+        Ok(inserted > 0)
+    }
+
+    fn purge_expired_refresh_jtis(&self, now_rfc3339: &str) -> AppResult<u64> {
+        let conn = self.db.conn();
+        let n = conn.execute(
+            "DELETE FROM used_refresh_jtis WHERE purge_after <= ?1",
+            params![now_rfc3339],
+        )?;
+        Ok(n as u64)
     }
 }

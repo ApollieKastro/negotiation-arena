@@ -3,10 +3,13 @@
 //! Реализации — в `infrastructure::db::repos`. Здесь только сигнатуры:
 //! домен не знает о SQLite.
 
-use crate::domain::entities::provider::{ModelRecord, Provider, RoleAssignment};
+use crate::domain::entities::audit::AuditEntry;
+use crate::domain::entities::provider::{
+    ModelRecord, Provider, RoleAssignment, UserModelPreference,
+};
 use crate::domain::entities::scenario::Scenario;
 use crate::domain::entities::session::{Session, SessionMessage};
-use crate::domain::entities::user::{User, UserRole, UserWithSecret};
+use crate::domain::entities::user::{LoginAttemptUpdate, User, UserRole, UserWithSecret};
 use crate::error::AppResult;
 
 // ─────────────────────────────────────────────────────────────
@@ -43,19 +46,102 @@ pub trait UserRepository: Send + Sync {
     fn set_active(&self, id: &str, is_active: bool) -> AppResult<()>;
     fn delete(&self, id: &str) -> AppResult<()>;
     fn count(&self) -> AppResult<u64>;
+
+    // ── Lockout неудачных входов ──
+    /// Фиксирует неудачную попытку: инкремент/сброс окна, опциональная блокировка.
+    fn record_login_failure(
+        &self,
+        id: &str,
+        window_secs: u64,
+        max_failures: u32,
+        lockout_secs: u64,
+    ) -> AppResult<LoginAttemptUpdate>;
+    /// Сбрасывает счётчик и блокировку (успешный вход).
+    fn clear_login_failures(&self, id: &str) -> AppResult<()>;
+
+    // ── Ротация refresh (single-use jti) ──
+    /// Помечает jti использованным. `Ok(false)` — jti уже был использован.
+    fn mark_refresh_jti_used(&self, jti: &str, user_id: &str, purge_after: &str)
+        -> AppResult<bool>;
+    /// Удаляет протухшие записи used_refresh_jtis (opportunist cleanup).
+    fn purge_expired_refresh_jtis(&self, now_rfc3339: &str) -> AppResult<u64>;
 }
 
 // ─────────────────────────────────────────────────────────────
 // Сессии
 // ─────────────────────────────────────────────────────────────
 
+/// Агрегаты сессий одного пользователя (считаются в SQL, без выборки строк).
+#[derive(Debug, Clone, Default)]
+pub struct UserSessionsAggregate {
+    pub total: u32,
+    pub finished: u32,
+    pub active: u32,
+    pub abandoned: u32,
+    pub best_score: i32,
+    pub avg_score: i32,
+    pub last_session_at: Option<String>,
+    /// Суммарный XP: положительные total_score завершённых сессий.
+    pub xp: i64,
+}
+
+/// Строка лидерборда, построенная одним SQL-запросом (JOIN + GROUP BY).
+#[derive(Debug, Clone)]
+pub struct LeaderboardRow {
+    pub user_id: String,
+    pub login: String,
+    pub display_name: Option<String>,
+    pub is_active: bool,
+    pub finished: u32,
+    pub best_score: i32,
+    pub avg_score: i32,
+    /// Суммарный XP (для сортировки/отображения в лидерборде).
+    pub xp: i64,
+}
+
+/// Сводка по всем сессиям платформы (один запрос).
+#[derive(Debug, Clone, Default)]
+pub struct PlatformSessionsAggregate {
+    pub total: u64,
+    pub finished: u64,
+    pub active: u64,
+    pub avg_finished_score: i32,
+    pub best_score: i32,
+}
+
 pub trait SessionRepository: Send + Sync {
     fn create(&self, session: &Session) -> AppResult<()>;
+    /// Создаёт сессию и opening-сообщение **в одной транзакции**.
+    fn create_with_opening(&self, session: &Session, opening: &SessionMessage) -> AppResult<()>;
     fn get(&self, id: &str) -> AppResult<Option<Session>>;
-    fn list_by_user(&self, user_id: &str, limit: u32) -> AppResult<Vec<Session>>;
+    /// История сессий пользователя: `LIMIT/OFFSET` + общий счётчик.
+    fn list_by_user(
+        &self,
+        user_id: &str,
+        limit: u32,
+        offset: u32,
+    ) -> AppResult<(Vec<Session>, u64)>;
     fn update(&self, session: &Session) -> AppResult<()>;
+    /// Фиксирует ход: UPDATE сессии + 1–2 сообщения **в одной транзакции**.
+    fn commit_turn(
+        &self,
+        session: &Session,
+        player: &SessionMessage,
+        partner: Option<&SessionMessage>,
+    ) -> AppResult<()>;
     fn append_message(&self, message: &SessionMessage) -> AppResult<()>;
     fn messages(&self, session_id: &str) -> AppResult<Vec<SessionMessage>>;
+
+    /// Агрегаты сессий пользователя одной строкой SQL.
+    fn user_stats_aggregate(&self, user_id: &str) -> AppResult<UserSessionsAggregate>;
+    /// Лидерборд: JOIN users + GROUP BY user_id (только `finished`).
+    fn leaderboard_rows(&self) -> AppResult<Vec<LeaderboardRow>>;
+    /// Общая сводка по таблице сессий.
+    fn platform_sessions_aggregate(&self) -> AppResult<PlatformSessionsAggregate>;
+    /// Счётчик сессий по дням (`YYYY-MM-DD`) начиная с `since` (RFC3339/дата).
+    fn activity_by_day(&self, since: &str) -> AppResult<Vec<(String, u32)>>;
+    /// Сколько сессий привязано к сценарию (для отказа в удалении).
+    fn count_by_scenario(&self, scenario_id: &str) -> AppResult<u64>;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -75,6 +161,17 @@ pub trait ProviderRepository: Send + Sync {
 
     fn role_assignments(&self) -> AppResult<Vec<RoleAssignment>>;
     fn set_role_assignment(&self, role: &str, model_id: &str) -> AppResult<()>;
+    /// Снимает назначение роли (удаляет строку; нет строки — no-op).
+    fn clear_role_assignment(&self, role: &str) -> AppResult<()>;
+
+    /// Все предпочтения пользователя (с JOIN имён моделей/провайдеров).
+    fn user_preferences(&self, user_id: &str) -> AppResult<Vec<UserModelPreference>>;
+    /// Предпочтение одной роли; `None` — используется глобальное назначение.
+    fn user_preference(&self, user_id: &str, role: &str) -> AppResult<Option<UserModelPreference>>;
+    /// Upsert предпочтения по `(user_id, role)`.
+    fn set_user_preference(&self, user_id: &str, role: &str, model_id: &str) -> AppResult<()>;
+    /// Удаляет предпочтение (возврат к глобальному назначению).
+    fn delete_user_preference(&self, user_id: &str, role: &str) -> AppResult<()>;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -87,6 +184,16 @@ pub trait SettingsRepository: Send + Sync {
     fn all(&self) -> AppResult<Vec<(String, String)>>;
 }
 
+/// Дневной учёт LLM-токенов на пользователя (квота `platform.llm_daily_token_limit`).
+pub trait LlmUsageRepository: Send + Sync {
+    /// Сколько токенов израсходовано пользователем за `day` (`YYYY-MM-DD`).
+    fn tokens_on(&self, user_id: &str, day: &str) -> AppResult<u64>;
+    /// Начисляет `tokens` (и +1 call) за `day` (upsert).
+    fn add_usage(&self, user_id: &str, day: &str, tokens: u64) -> AppResult<()>;
+    /// Удаляет записи старше `before_day` (`YYYY-MM-DD`, включая границу).
+    fn purge_before(&self, before_day: &str) -> AppResult<()>;
+}
+
 pub trait AuditRepository: Send + Sync {
     fn append(
         &self,
@@ -96,4 +203,13 @@ pub trait AuditRepository: Send + Sync {
         entity_id: Option<&str>,
         details: Option<&str>,
     ) -> AppResult<()>;
+
+    /// Последние записи: `limit` (сверху вниз по `created_at`),
+    /// опциональный фильтр по исполнителю и коду действия.
+    fn list(
+        &self,
+        limit: u32,
+        user_id: Option<&str>,
+        action: Option<&str>,
+    ) -> AppResult<Vec<AuditEntry>>;
 }

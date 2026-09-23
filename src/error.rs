@@ -26,8 +26,14 @@ pub enum AppError {
     #[error("{0}")]
     Conflict(String),
 
+    #[error("{0}")]
+    TooManyRequests(String),
+
     #[error("config: {0}")]
     Config(String),
+
+    #[error("{0}")]
+    ServiceUnavailable(String),
 
     #[error("{provider}: {message}")]
     Upstream { provider: String, message: String },
@@ -55,7 +61,9 @@ impl AppError {
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::Conflict(_) => StatusCode::CONFLICT,
+            Self::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::Config(_) | Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::Upstream { .. } => StatusCode::BAD_GATEWAY,
         }
     }
@@ -71,6 +79,12 @@ impl AppError {
                 tracing::error!(error = %msg, "ошибка конфигурации");
                 "Внутренняя ошибка конфигурации".to_string()
             }
+            Self::Upstream { provider, message } => {
+                // Тело ответа провайдера может содержать внутренние URL и детали —
+                // клиентам отдаём общее сообщение, детали только в лог.
+                tracing::warn!(provider, message, "ошибка внешнего провайдера");
+                "Внешний сервис недоступен".to_string()
+            }
             other => other.to_string(),
         }
     }
@@ -80,6 +94,22 @@ impl From<rusqlite::Error> for AppError {
     fn from(err: rusqlite::Error) -> Self {
         match &err {
             rusqlite::Error::QueryReturnedNoRows => Self::NotFound("Запись не найдена".into()),
+            // Разбираем текст ошибки: SQLite не отдаёт тип constraint отдельно
+            // от `SqliteFailure`, но message стабилен между версиями.
+            rusqlite::Error::SqliteFailure(f, Some(msg))
+                if f.code == rusqlite::ErrorCode::ConstraintViolation =>
+            {
+                let lower = msg.to_lowercase();
+                if lower.contains("foreign key") {
+                    // Связанная запись отсутствует или ещё используется
+                    // (например, удаление сценария/модели с зависимостями).
+                    Self::Conflict("Связанная запись не найдена или ещё используется".into())
+                } else if lower.contains("unique") {
+                    Self::Conflict("Запись с такими данными уже существует".into())
+                } else {
+                    Self::Conflict("Нарушение ограничения целостности".into())
+                }
+            }
             rusqlite::Error::SqliteFailure(f, _)
                 if f.code == rusqlite::ErrorCode::ConstraintViolation =>
             {

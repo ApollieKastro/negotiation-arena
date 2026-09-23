@@ -21,6 +21,7 @@ pub struct SqliteRepos {
     pub providers: provider::SqliteProviderRepo,
     pub settings: settings::SqliteSettingsRepo,
     pub audit: settings::SqliteAuditRepo,
+    pub llm_usage: settings::SqliteLlmUsageRepo,
 }
 
 impl SqliteRepos {
@@ -31,7 +32,8 @@ impl SqliteRepos {
             sessions: session::SqliteSessionRepo::new(db.clone()),
             providers: provider::SqliteProviderRepo::new(db.clone()),
             settings: settings::SqliteSettingsRepo::new(db.clone()),
-            audit: settings::SqliteAuditRepo::new(db),
+            audit: settings::SqliteAuditRepo::new(db.clone()),
+            llm_usage: settings::SqliteLlmUsageRepo::new(db),
         }
     }
 }

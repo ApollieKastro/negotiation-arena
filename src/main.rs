@@ -51,10 +51,14 @@ async fn main() -> AppResult<()> {
         &config.security.encryption_secret,
     )?);
 
+    let repos = Arc::new(infrastructure::db::repos::SqliteRepos::new(db.clone()));
+    let services = Arc::new(application::Services::new(&config, repos, cipher.clone())?);
+
     let state = AppState {
         config: Arc::new(config.clone()),
         db,
         cipher,
+        services,
     };
 
     let app = routes::build(state);
@@ -63,9 +67,13 @@ async fn main() -> AppResult<()> {
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!("сервер слушает http://{addr}");
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        // ConnectInfo нужен rate-limit'у по IP auth-эндпоинтов.
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     tracing::info!("сервер остановлен");
     Ok(())

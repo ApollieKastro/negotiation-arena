@@ -28,6 +28,11 @@ pub struct SessionReport {
     pub recommendations: Vec<String>,
 }
 
+/// Локаль отчёта: `ru` (по умолчанию) или `en`.
+fn is_en(locale: &str) -> bool {
+    locale.eq_ignore_ascii_case("en")
+}
+
 /// Применяет анализ реплики к метрикам сессии.
 ///
 /// Возвращает прибавку к баллу за этот ход (может быть отрицательной
@@ -81,13 +86,16 @@ pub fn apply_analysis(metrics: &mut SessionMetrics, analysis: &MessageAnalysis) 
 }
 
 /// Строит итоговый отчёт по сессии.
+///
+/// `locale` — `ru` | `en` (из настроек пользователя); иначе — русский.
 pub fn build_report(
     scenario: &Scenario,
     metrics: &SessionMetrics,
     turn_count: u32,
+    locale: &str,
 ) -> SessionReport {
     let total_score = metrics.total_score();
-    let ending = determine_ending(scenario, total_score);
+    let ending = determine_ending(scenario, total_score, locale);
 
     SessionReport {
         total_score,
@@ -104,13 +112,15 @@ pub fn build_report(
         turn_count,
         ending,
         goal: scenario.player_goal.clone(),
-        feedback: build_feedback(metrics, turn_count),
-        recommendations: build_recommendations(metrics),
+        feedback: build_feedback(metrics, turn_count, locale),
+        recommendations: build_recommendations(metrics, locale),
     }
 }
 
 /// Выбирает финал с наивысшим `min_score`, не превышающим фактический балл.
-pub fn determine_ending(scenario: &Scenario, score: i32) -> Ending {
+///
+/// Дефолтный финал (когда ни один threshold не подошёл) локализуется.
+pub fn determine_ending(scenario: &Scenario, score: i32, locale: &str) -> Ending {
     let mut sorted = scenario.endings.clone();
     sorted.sort_by_key(|e| std::cmp::Reverse(e.min_score));
 
@@ -118,17 +128,36 @@ pub fn determine_ending(scenario: &Scenario, score: i32) -> Ending {
         return ending.clone();
     }
 
-    sorted.last().cloned().unwrap_or_else(|| Ending {
-        id: "none".to_string(),
-        title: "Переговоры завершены".to_string(),
-        text: "Переговоры завершены без явного результата.".to_string(),
-        outcome: "Результат не определён".to_string(),
-        min_score: 0,
-    })
+    if is_en(locale) {
+        sorted.last().cloned().unwrap_or_else(|| Ending {
+            id: "none".to_string(),
+            title: "Negotiation finished".to_string(),
+            text: "The negotiation ended without a clear outcome.".to_string(),
+            outcome: "Outcome undetermined".to_string(),
+            min_score: 0,
+        })
+    } else {
+        sorted.last().cloned().unwrap_or_else(|| Ending {
+            id: "none".to_string(),
+            title: "Переговоры завершены".to_string(),
+            text: "Переговоры завершены без явного результата.".to_string(),
+            outcome: "Результат не определён".to_string(),
+            min_score: 0,
+        })
+    }
 }
 
-/// Разборная обратная связь на русском (markdown).
-fn build_feedback(metrics: &SessionMetrics, turn_count: u32) -> String {
+/// Разборная обратная связь (markdown), локаль `ru` | `en`.
+fn build_feedback(metrics: &SessionMetrics, turn_count: u32, locale: &str) -> String {
+    if is_en(locale) {
+        build_feedback_en(metrics, turn_count)
+    } else {
+        build_feedback_ru(metrics, turn_count)
+    }
+}
+
+/// Обратная связь на русском (markdown).
+fn build_feedback_ru(metrics: &SessionMetrics, turn_count: u32) -> String {
     let mut out = String::new();
 
     // ── Стратегия ──
@@ -206,8 +235,91 @@ fn build_feedback(metrics: &SessionMetrics, turn_count: u32) -> String {
     out
 }
 
-/// Короткие пункты «что улучшить» для карточки результата.
-fn build_recommendations(metrics: &SessionMetrics) -> Vec<String> {
+/// Обратная связь на английском (markdown).
+fn build_feedback_en(metrics: &SessionMetrics, turn_count: u32) -> String {
+    let mut out = String::new();
+
+    out.push_str("## Strategy\n\n");
+    if metrics.collaboration_count > metrics.compromise_count
+        && metrics.collaboration_count > metrics.confrontation_count
+    {
+        out.push_str(
+            "You ran the negotiation through **collaboration** — the best way to create value for both sides.\n\n",
+        );
+    } else if metrics.compromise_count > metrics.collaboration_count {
+        out.push_str(
+            "You chose **compromise** most often. It moves talks forward but often caps the upside: you concede before uncovering interests.\n\n",
+        );
+    } else if metrics.confrontation_count > 0 {
+        out.push_str(
+            "You used **confrontation**. It protects your position but lowers trust and hardens the counterpart.\n\n",
+        );
+    } else {
+        out.push_str("The dialogue stayed in a calm business tone.\n\n");
+    }
+
+    out.push_str("## Questions (SPIN)\n\n");
+    let spin = &metrics.spin_counts;
+    if spin.total() > 0 {
+        out.push_str(&format!(
+            "- **S** (situation): {}\n- **P** (problem): {}\n- **I** (implication): {}\n- **N** (need-payoff): {}\n\n",
+            spin.situation, spin.problem, spin.implication, spin.need_payoff
+        ));
+        if spin.implication == 0 {
+            out.push_str(
+                "⚠️ No **implication** questions. “How does this affect your business?” creates urgency and makes the counterpart feel the scale of the problem.\n\n",
+            );
+        }
+        if spin.need_payoff == 0 {
+            out.push_str(
+                "⚠️ No **need-payoff** questions. Let the counterpart voice the benefit themselves — it beats any claim you make.\n\n",
+            );
+        }
+    } else {
+        out.push_str("You did not use SPIN questions. Try:\n");
+        out.push_str("- **S**: “How do you handle this today?”\n");
+        out.push_str("- **P**: “What problems do you run into?”\n");
+        out.push_str("- **I**: “How does that affect your results?”\n");
+        out.push_str("- **N**: “What changes once this is solved?”\n\n");
+    }
+
+    out.push_str("## Interests vs positions\n\n");
+    if metrics.interest_focused > 0 {
+        out.push_str(&format!(
+            "In {} of {} replies you worked with **interests**, not positions. That is the core of the Harvard method.\n\n",
+            metrics.interest_focused, turn_count
+        ));
+    } else {
+        out.push_str(
+            "⚠️ You stayed on positions. Instead of “the price is too high”, ask “Why does this matter to you?” — under a position there is almost always a need you can meet differently.\n\n",
+        );
+    }
+
+    out.push_str("## Objective criteria\n\n");
+    if metrics.objective_criteria_used > 0 {
+        out.push_str(&format!(
+            "You leaned on **objective criteria** {} time(s): market data, standards, contract terms. That reduces emotion and strengthens your case.\n\n",
+            metrics.objective_criteria_used
+        ));
+    } else {
+        out.push_str(
+            "⚠️ Your arguments rested on opinion. Ground them in market value, professional standards, precedents — it moves the debate out of “opinion vs opinion”.\n\n",
+        );
+    }
+
+    out
+}
+
+/// Короткие пункты «что улучшить» для карточки результата, локаль `ru` | `en`.
+fn build_recommendations(metrics: &SessionMetrics, locale: &str) -> Vec<String> {
+    if is_en(locale) {
+        build_recommendations_en(metrics)
+    } else {
+        build_recommendations_ru(metrics)
+    }
+}
+
+fn build_recommendations_ru(metrics: &SessionMetrics) -> Vec<String> {
     let mut recs = Vec::new();
 
     if metrics.spin_counts.implication < 2 {
@@ -234,6 +346,39 @@ fn build_recommendations(metrics: &SessionMetrics) -> Vec<String> {
     }
     if metrics.collaboration_count == 0 && metrics.compromise_count == 0 {
         recs.push("Ищите варианты выгодные обеим сторонам, а не только свою уступку".to_string());
+    }
+
+    recs
+}
+
+fn build_recommendations_en(metrics: &SessionMetrics) -> Vec<String> {
+    let mut recs = Vec::new();
+
+    if metrics.spin_counts.implication < 2 {
+        recs.push(
+            "Ask more implication questions (“what happens if this stays unsolved?”)".to_string(),
+        );
+    }
+    if metrics.spin_counts.need_payoff < 2 {
+        recs.push(
+            "Let the counterpart name the benefit of the solution themselves (Need-payoff)"
+                .to_string(),
+        );
+    }
+    if metrics.interest_focused < 2 {
+        recs.push(
+            "Go for interests: “why does this matter to you?” instead of arguing positions"
+                .to_string(),
+        );
+    }
+    if metrics.objective_criteria_used < 1 {
+        recs.push("Back your case with objective criteria: market, standards, data".to_string());
+    }
+    if metrics.confrontation_count > metrics.collaboration_count {
+        recs.push("Less pressure, more joint problem-solving".to_string());
+    }
+    if metrics.collaboration_count == 0 && metrics.compromise_count == 0 {
+        recs.push("Look for options that help both sides, not only your concession".to_string());
     }
 
     recs
@@ -334,10 +479,10 @@ mod tests {
     #[test]
     fn ending_picked_by_threshold() {
         let scenario = scenario_with_endings();
-        assert_eq!(determine_ending(&scenario, 70).id, "win");
-        assert_eq!(determine_ending(&scenario, 30).id, "partial");
-        assert_eq!(determine_ending(&scenario, 5).id, "fail");
-        assert_eq!(determine_ending(&scenario, -10).id, "fail");
+        assert_eq!(determine_ending(&scenario, 70, "ru").id, "win");
+        assert_eq!(determine_ending(&scenario, 30, "ru").id, "partial");
+        assert_eq!(determine_ending(&scenario, 5, "ru").id, "fail");
+        assert_eq!(determine_ending(&scenario, -10, "ru").id, "fail");
     }
 
     #[test]
@@ -347,7 +492,7 @@ mod tests {
         let mut metrics = SessionMetrics::default();
         apply_analysis(&mut metrics, &analysis);
 
-        let report = build_report(&scenario, &metrics, 1);
+        let report = build_report(&scenario, &metrics, 1, "ru");
         assert_eq!(report.goal, "Заключить сделку");
         assert!(!report.feedback.is_empty());
         assert!(
@@ -355,5 +500,36 @@ mod tests {
             "должны быть пункты улучшения"
         );
         assert_eq!(report.total_score, metrics.total_score());
+    }
+
+    #[test]
+    fn report_localized_to_english() {
+        let scenario = scenario_with_endings();
+        let analysis = crate::domain::services::analysis::analyze("Just testing.");
+        let mut metrics = SessionMetrics::default();
+        apply_analysis(&mut metrics, &analysis);
+
+        let report = build_report(&scenario, &metrics, 1, "en");
+        assert!(report.feedback.contains("## Strategy"), "EN feedback");
+        assert!(
+            !report.recommendations.is_empty(),
+            "EN recommendations present"
+        );
+        // Русский раздел не должен мелькать в EN-отчёте.
+        assert!(!report.feedback.contains("## Стратегия"));
+    }
+
+    #[test]
+    fn default_ending_respects_locale() {
+        let empty = Scenario {
+            endings: vec![],
+            ..scenario_with_endings()
+        };
+        let ru = determine_ending(&empty, 10, "ru");
+        let en = determine_ending(&empty, 10, "en");
+        assert_eq!(ru.id, "none");
+        assert_eq!(en.id, "none");
+        assert!(ru.title.contains("Переговоры"));
+        assert!(en.title.contains("Negotiation"));
     }
 }

@@ -24,6 +24,11 @@ pub async fn health(State(state): State<AppState>) -> (StatusCode, Json<serde_js
 }
 
 pub async fn not_found() -> (StatusCode, Json<serde_json::Value>) {
+    not_found_response()
+}
+
+/// Единый JSON-404: `{"error": "Маршрут не найден"}` (health, SPA-miss, API).
+pub fn not_found_response() -> (StatusCode, Json<serde_json::Value>) {
     (
         StatusCode::NOT_FOUND,
         Json(json!({ "error": "Маршрут не найден" })),

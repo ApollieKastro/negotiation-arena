@@ -110,10 +110,16 @@ pub fn derive_key(secret: &str) -> [u8; KEY_LEN] {
 /// Маскировка ключа для показа в UI: `gsk_••••abcd`.
 pub fn mask_secret(secret: &str) -> String {
     let secret = secret.trim();
-    if secret.len() <= 4 {
+    // Работаем по границам символов: срез по байтам паникует на многобайтовом UTF-8.
+    let mut chars = secret.chars();
+    let head: String = chars
+        .by_ref()
+        .take(secret.chars().count().saturating_sub(4))
+        .collect();
+    if head.is_empty() {
         return "••••".to_string();
     }
-    let tail = &secret[secret.len() - 4..];
+    let tail: String = chars.collect();
     format!("••••{tail}")
 }
 
@@ -154,5 +160,15 @@ mod tests {
     fn mask_hides_middle() {
         assert_eq!(mask_secret("gsk_abcdefgh"), "••••efgh");
         assert_eq!(mask_secret("abc"), "••••");
+    }
+
+    #[test]
+    fn mask_is_utf8_safe() {
+        // Хвост из многобайтовых символов не должен паниковать.
+        let key = format!("sk_{}", "ключ".repeat(10));
+        assert!(mask_secret(&key).starts_with('•'));
+        assert_eq!(mask_secret("аия"), "••••"); // 3 символа → whole secret
+        assert_eq!(mask_secret("абвгд"), "••••бвгд"); // 5 символов → хвост 4
+        assert_eq!(mask_secret("абвгде"), "••••вгде"); // 6 символов → хвост 4
     }
 }

@@ -45,6 +45,21 @@ const MIGRATIONS: &[Migration] = &[
         name: "scenario_and_session_details",
         sql: include_str!("migrations/0006_scenario_and_session_details.sql"),
     },
+    Migration {
+        version: 7,
+        name: "unify_max_turns",
+        sql: include_str!("migrations/0007_unify_max_turns.sql"),
+    },
+    Migration {
+        version: 8,
+        name: "auth_lockout_and_refresh",
+        sql: include_str!("migrations/0008_auth_lockout_and_refresh.sql"),
+    },
+    Migration {
+        version: 9,
+        name: "llm_daily_usage",
+        sql: include_str!("migrations/0009_llm_daily_usage.sql"),
+    },
 ];
 
 /// Общее число известных миграций (для тестов).

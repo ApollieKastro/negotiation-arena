@@ -5,7 +5,9 @@ use std::sync::Arc;
 use rusqlite::{params, OptionalExtension, Row};
 
 use crate::domain::entities::model::{ModelRole, ProviderKind};
-use crate::domain::entities::provider::{ModelRecord, Provider, RoleAssignment};
+use crate::domain::entities::provider::{
+    ModelRecord, Provider, RoleAssignment, UserModelPreference,
+};
 use crate::domain::ports::ProviderRepository;
 use crate::error::AppResult;
 use crate::infrastructure::db::Database;
@@ -205,4 +207,77 @@ impl ProviderRepository for SqliteProviderRepo {
         )?;
         Ok(())
     }
+
+    fn clear_role_assignment(&self, role: &str) -> AppResult<()> {
+        let conn = self.db.conn();
+        conn.execute(
+            "DELETE FROM role_assignments WHERE role = ?1",
+            params![role],
+        )?;
+        Ok(())
+    }
+
+    fn user_preferences(&self, user_id: &str) -> AppResult<Vec<UserModelPreference>> {
+        let conn = self.db.conn();
+        let mut stmt = conn.prepare(
+            "SELECT up.user_id, up.role, up.model_id, m.model_key, m.display_name,
+                    m.provider_id, p.name, up.updated_at
+             FROM user_model_preferences up
+             JOIN models m ON m.id = up.model_id
+             JOIN providers p ON p.id = m.provider_id
+             WHERE up.user_id = ?1
+             ORDER BY up.role",
+        )?;
+        let rows = stmt.query_map(params![user_id], map_user_preference)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    fn user_preference(&self, user_id: &str, role: &str) -> AppResult<Option<UserModelPreference>> {
+        let conn = self.db.conn();
+        let sql = "SELECT up.user_id, up.role, up.model_id, m.model_key, m.display_name,
+                          m.provider_id, p.name, up.updated_at
+                   FROM user_model_preferences up
+                   JOIN models m ON m.id = up.model_id
+                   JOIN providers p ON p.id = m.provider_id
+                   WHERE up.user_id = ?1 AND up.role = ?2";
+        conn.query_row(sql, params![user_id, role], map_user_preference)
+            .optional()
+            .map_err(Into::into)
+    }
+
+    fn set_user_preference(&self, user_id: &str, role: &str, model_id: &str) -> AppResult<()> {
+        let conn = self.db.conn();
+        conn.execute(
+            "INSERT INTO user_model_preferences (user_id, role, model_id, updated_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(user_id, role) DO UPDATE SET
+                model_id = excluded.model_id,
+                updated_at = excluded.updated_at",
+            params![user_id, role, model_id, chrono::Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    fn delete_user_preference(&self, user_id: &str, role: &str) -> AppResult<()> {
+        let conn = self.db.conn();
+        conn.execute(
+            "DELETE FROM user_model_preferences WHERE user_id = ?1 AND role = ?2",
+            params![user_id, role],
+        )?;
+        Ok(())
+    }
+}
+
+fn map_user_preference(row: &Row<'_>) -> rusqlite::Result<UserModelPreference> {
+    let role: String = row.get(1)?;
+    Ok(UserModelPreference {
+        user_id: row.get(0)?,
+        role: ModelRole::from_slug(&role).unwrap_or(ModelRole::Llm),
+        model_id: row.get(2)?,
+        model_key: row.get(3)?,
+        model_display_name: row.get(4)?,
+        provider_id: row.get(5)?,
+        provider_name: row.get(6)?,
+        updated_at: row.get(7)?,
+    })
 }
