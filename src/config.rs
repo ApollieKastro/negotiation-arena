@@ -13,6 +13,7 @@ pub struct AppConfig {
     pub server: ServerConfig,
     pub security: SecurityConfig,
     pub storage: StorageConfig,
+    pub rate_limit: RateLimitConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -32,6 +33,9 @@ pub struct SecurityConfig {
     /// Секрет, из которого выводится ключ шифрования API-ключей провайдеров.
     /// В продакшене задавайте явный `ENCRYPTION_KEY`, а не `JWT_SECRET`.
     pub encryption_secret: String,
+    /// Разрешённые CORS-origin (например `https://app.example.com`).
+    /// Пусто — `Any` (удобно в dev; в проде задайте allowlist через `ALLOWED_ORIGINS`).
+    pub allowed_origins: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -39,6 +43,15 @@ pub struct StorageConfig {
     pub db_path: PathBuf,
     /// Каталог для скачиваемых локальных моделей (STT/TTS).
     pub models_dir: PathBuf,
+}
+
+/// Rate-limit на публичные auth-эндпоинты (login/register/refresh) по IP.
+#[derive(Debug, Clone)]
+pub struct RateLimitConfig {
+    /// Максимум запросов на IP в окне. `0` — отключено (удобно в тестах).
+    pub auth_max: u32,
+    /// Длина окна, секунды.
+    pub auth_window_secs: u64,
 }
 
 impl AppConfig {
@@ -58,10 +71,15 @@ impl AppConfig {
                     // Этого достаточно для разработки, но в проде задайте ENCRYPTION_KEY.
                     &env_or("JWT_SECRET", "dev-only-jwt-secret-change-me-in-production"),
                 ),
+                allowed_origins: env_list("ALLOWED_ORIGINS"),
             },
             storage: StorageConfig {
                 db_path: PathBuf::from(env_or("DB_PATH", "negotiation_arena.db")),
                 models_dir: PathBuf::from(env_or("MODELS_DIR", "models")),
+            },
+            rate_limit: RateLimitConfig {
+                auth_max: env_parse("AUTH_RATE_LIMIT_MAX", 20)?,
+                auth_window_secs: env_parse("AUTH_RATE_LIMIT_WINDOW_SECS", 60)?,
             },
         };
 
@@ -88,6 +106,18 @@ impl AppConfig {
                 "JWT_TTL_SECONDS должен быть не меньше 60".into(),
             ));
         }
+        if self.rate_limit.auth_max > 0 && self.rate_limit.auth_window_secs == 0 {
+            return Err(AppError::Config(
+                "AUTH_RATE_LIMIT_WINDOW_SECS должен быть больше 0, если лимит включён".into(),
+            ));
+        }
+        for origin in &self.security.allowed_origins {
+            if origin != "*" && !origin.starts_with("http://") && !origin.starts_with("https://") {
+                return Err(AppError::Config(format!(
+                    "ALLOWED_ORIGINS: некорректный origin `{origin}` (ожидается http(s)://…)"
+                )));
+            }
+        }
         Ok(())
     }
 }
@@ -97,6 +127,16 @@ fn env_or(key: &str, default: &str) -> String {
         .ok()
         .filter(|v| !v.trim().is_empty())
         .unwrap_or_else(|| default.to_string())
+}
+
+/// Список значений через запятую: `A, B , C` → `["A", "B", "C"]`.
+fn env_list(key: &str) -> Vec<String> {
+    env_or(key, "")
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 fn env_parse<T: std::str::FromStr>(key: &str, default: T) -> AppResult<T> {

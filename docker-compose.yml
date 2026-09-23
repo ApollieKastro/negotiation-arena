@@ -1,0 +1,36 @@
+services:
+  arena:
+    build: .
+    image: negotiation-arena:latest
+    container_name: negotiation-arena
+    ports:
+      - "3001:3001"
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3001"
+      RUST_LOG: ${RUST_LOG:-info}
+      # Секреты подставляются из .env (compose читает его автоматически).
+      # Значения ниже — dev-фоллбэки, в проде задайте свои.
+      JWT_SECRET: ${JWT_SECRET:-dev-only-jwt-secret-change-me-in-production}
+      JWT_TTL_SECONDS: ${JWT_TTL_SECONDS:-86400}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-${JWT_SECRET:-dev-only-jwt-secret-change-me-in-production}}
+      # CORS: пусто = Any (dev). В проде: https://app.example.com,…
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      # Rate-limit auth по IP (0 = off)
+      AUTH_RATE_LIMIT_MAX: ${AUTH_RATE_LIMIT_MAX:-20}
+      AUTH_RATE_LIMIT_WINDOW_SECS: ${AUTH_RATE_LIMIT_WINDOW_SECS:-60}
+      DB_PATH: /app/data/negotiation_arena.db
+      MODELS_DIR: /app/data/models
+    volumes:
+      - negotiation_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  negotiation_data:

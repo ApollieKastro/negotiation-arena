@@ -18,8 +18,8 @@ __pycache__/
 *.bin
 *.pt
 
-# Build output / static bundle
-/dist/
+# NB: dist/ — исходники SPA (index.html, css, js), которые Axum отдаёт как есть.
+# Это НЕ build-output: собранных артефактов нет, поэтому dist/ версионируется.
 
 # Database
 *.db

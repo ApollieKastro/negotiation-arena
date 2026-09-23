@@ -7,6 +7,8 @@ description = "Тренажёр переговорных навыков с ИИ-
 [dependencies]
 # ── Web ──
 axum = { version = "0.7", features = ["multipart"] }
+# tower (service_fn + util) — SPA-fallback и oneshot в тестах; util нужен и рантайму.
+tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.5", features = ["fs", "cors", "trace"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
@@ -41,8 +43,7 @@ uuid = { version = "1", features = ["v4"] }
 aes-gcm = "0.10"
 
 [dev-dependencies]
-# Интеграционные тесты HTTP: `ServiceExt::oneshot` (util уже включён в дереве).
-tower = { version = "0.5", features = ["util"] }
+# Интеграционные тесты HTTP: `ServiceExt::oneshot` (util уже включён в dependencies).
 
 [profile.release]
 lto = "thin"

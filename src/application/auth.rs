@@ -45,6 +45,8 @@ pub enum Permission {
     ManagePlatformSettings,
     /// Сводная статистика и лидерборд (admin).
     ViewAllStats,
+    /// Просмотр аудит-лога (admin).
+    ViewAuditLog,
 }
 
 impl Permission {
@@ -58,6 +60,7 @@ impl Permission {
             Permission::ManageProviders => "управление провайдерами",
             Permission::ManagePlatformSettings => "настройки платформы",
             Permission::ViewAllStats => "общая статистика",
+            Permission::ViewAuditLog => "просмотр аудита",
         }
     }
 }
@@ -476,6 +479,7 @@ mod tests {
         assert!(!can(UserRole::User, Permission::ManageProviders));
         assert!(!can(UserRole::User, Permission::ManagePlatformSettings));
         assert!(!can(UserRole::User, Permission::ViewAllStats));
+        assert!(!can(UserRole::User, Permission::ViewAuditLog));
     }
 
     #[test]
@@ -489,6 +493,7 @@ mod tests {
             Permission::ManageProviders,
             Permission::ManagePlatformSettings,
             Permission::ViewAllStats,
+            Permission::ViewAuditLog,
         ] {
             assert!(can(UserRole::Admin, p), "админ должен иметь {:?}", p);
         }

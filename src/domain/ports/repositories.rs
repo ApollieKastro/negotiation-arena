@@ -3,7 +3,10 @@
 //! Реализации — в `infrastructure::db::repos`. Здесь только сигнатуры:
 //! домен не знает о SQLite.
 
-use crate::domain::entities::provider::{ModelRecord, Provider, RoleAssignment};
+use crate::domain::entities::audit::AuditEntry;
+use crate::domain::entities::provider::{
+    ModelRecord, Provider, RoleAssignment, UserModelPreference,
+};
 use crate::domain::entities::scenario::Scenario;
 use crate::domain::entities::session::{Session, SessionMessage};
 use crate::domain::entities::user::{User, UserRole, UserWithSecret};
@@ -120,6 +123,17 @@ pub trait ProviderRepository: Send + Sync {
 
     fn role_assignments(&self) -> AppResult<Vec<RoleAssignment>>;
     fn set_role_assignment(&self, role: &str, model_id: &str) -> AppResult<()>;
+    /// Снимает назначение роли (удаляет строку; нет строки — no-op).
+    fn clear_role_assignment(&self, role: &str) -> AppResult<()>;
+
+    /// Все предпочтения пользователя (с JOIN имён моделей/провайдеров).
+    fn user_preferences(&self, user_id: &str) -> AppResult<Vec<UserModelPreference>>;
+    /// Предпочтение одной роли; `None` — используется глобальное назначение.
+    fn user_preference(&self, user_id: &str, role: &str) -> AppResult<Option<UserModelPreference>>;
+    /// Upsert предпочтения по `(user_id, role)`.
+    fn set_user_preference(&self, user_id: &str, role: &str, model_id: &str) -> AppResult<()>;
+    /// Удаляет предпочтение (возврат к глобальному назначению).
+    fn delete_user_preference(&self, user_id: &str, role: &str) -> AppResult<()>;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -141,4 +155,13 @@ pub trait AuditRepository: Send + Sync {
         entity_id: Option<&str>,
         details: Option<&str>,
     ) -> AppResult<()>;
+
+    /// Последние записи: `limit` (сверху вниз по `created_at`),
+    /// опциональный фильтр по исполнителю и коду действия.
+    fn list(
+        &self,
+        limit: u32,
+        user_id: Option<&str>,
+        action: Option<&str>,
+    ) -> AppResult<Vec<AuditEntry>>;
 }

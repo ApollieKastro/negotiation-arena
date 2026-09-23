@@ -46,3 +46,20 @@ pub struct RoleAssignment {
     pub model_id: String,
     pub updated_at: String,
 }
+
+/// Пользовательское предпочтение модели для роли.
+///
+/// Отсутствие записи = используется глобальное назначение роли
+/// ([`RoleAssignment`]). Название/ключ модели присоединяются из `models`
+/// и `providers`, чтобы UI не делал N+1 запросов.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserModelPreference {
+    pub user_id: String,
+    pub role: ModelRole,
+    pub model_id: String,
+    pub model_key: String,
+    pub model_display_name: String,
+    pub provider_id: String,
+    pub provider_name: String,
+    pub updated_at: String,
+}

@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use rusqlite::{params, OptionalExtension};
 
+use crate::domain::entities::audit::AuditEntry;
 use crate::domain::ports::{AuditRepository, SettingsRepository};
 use crate::error::AppResult;
 use crate::infrastructure::db::Database;
@@ -84,5 +85,50 @@ impl AuditRepository for SqliteAuditRepo {
             ],
         )?;
         Ok(())
+    }
+
+    fn list(
+        &self,
+        limit: u32,
+        user_id: Option<&str>,
+        action: Option<&str>,
+    ) -> AppResult<Vec<AuditEntry>> {
+        let conn = self.db.conn();
+
+        let mut sql = String::from(
+            "SELECT id, user_id, action, entity, entity_id, details, created_at FROM audit_log",
+        );
+        let mut conditions: Vec<String> = Vec::new();
+        let mut bound: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(uid) = user_id {
+            conditions.push(format!("user_id = ?{}", bound.len() + 1));
+            bound.push(Box::new(uid.to_string()));
+        }
+        if let Some(act) = action {
+            conditions.push(format!("action = ?{}", bound.len() + 1));
+            bound.push(Box::new(act.to_string()));
+        }
+        if !conditions.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+        sql.push_str(" ORDER BY created_at DESC, id DESC LIMIT ?");
+        bound.push(Box::new(limit));
+
+        let mut stmt = conn.prepare(&sql)?;
+        let params: Vec<&dyn rusqlite::ToSql> = bound.iter().map(|b| b.as_ref()).collect();
+        let rows = stmt.query_map(params.as_slice(), |row| {
+            Ok(AuditEntry {
+                id: row.get(0)?,
+                user_id: row.get(1)?,
+                action: row.get(2)?,
+                entity: row.get(3)?,
+                entity_id: row.get(4)?,
+                details: row.get(5)?,
+                created_at: row.get(6)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 }

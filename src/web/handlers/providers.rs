@@ -171,3 +171,17 @@ pub async fn assign_role(
         .assign_role(actor.context(), role, &req.model_id)?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
+
+/// `DELETE /api/v1/model-assignments/:role` — снять модель с роли.
+pub async fn unassign_role(
+    State(state): State<AppState>,
+    actor: AuthUser,
+    Path(role): Path<String>,
+) -> AppResult<Json<serde_json::Value>> {
+    let role = parse_role(&role)?;
+    state
+        .services
+        .providers
+        .clear_role_assignment(actor.context(), role)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}

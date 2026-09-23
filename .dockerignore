@@ -1,0 +1,33 @@
+# Сборка и VCS
+target/
+.git/
+.github/
+
+# Секреты и локальное окружение
+.env
+.env.local
+
+# Базы данных
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+negotiation_arena.legacy-backup.db
+
+# Локальные модели (большие бинарники, качаются в рантайме)
+models/
+
+# Прочее, не нужное в образе
+legacy/
+node_modules/
+docs/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+*.log
+src-tauri/
+scenarios/
+scripts/

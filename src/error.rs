@@ -26,8 +26,14 @@ pub enum AppError {
     #[error("{0}")]
     Conflict(String),
 
+    #[error("{0}")]
+    TooManyRequests(String),
+
     #[error("config: {0}")]
     Config(String),
+
+    #[error("{0}")]
+    ServiceUnavailable(String),
 
     #[error("{provider}: {message}")]
     Upstream { provider: String, message: String },
@@ -55,7 +61,9 @@ impl AppError {
             Self::Forbidden(_) => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::Conflict(_) => StatusCode::CONFLICT,
+            Self::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             Self::Config(_) | Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             Self::Upstream { .. } => StatusCode::BAD_GATEWAY,
         }
     }

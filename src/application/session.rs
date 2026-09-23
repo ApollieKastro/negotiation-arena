@@ -198,7 +198,10 @@ impl SessionService {
         let history = self.repos.sessions.messages(session_id)?;
 
         // 1) Ответ собеседника (LLM) — до записи в БД.
-        let partner_reply = self.partner_reply(&scenario, &history, player_text).await?;
+        // Резолв модели: предпочтение пользователя → глобальное назначение роли.
+        let partner_reply = self
+            .partner_reply(&scenario, &history, player_text, &session.user_id)
+            .await?;
 
         // 2) Анализ и скоринг реплики игрока.
         let analysis = analysis::analyze(player_text);
@@ -374,8 +377,9 @@ impl SessionService {
         scenario: &Scenario,
         history: &[SessionMessage],
         player_text: &str,
+        user_id: &str,
     ) -> AppResult<String> {
-        let (chat, model_key) = self.providers.resolve_chat().await?;
+        let (chat, model_key) = self.providers.resolve_chat_for(user_id).await?;
 
         let mut messages = Vec::with_capacity(history.len() + 2);
         messages.push(ChatMessage::system(system_prompt(scenario)));

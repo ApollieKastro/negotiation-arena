@@ -5,14 +5,18 @@
 //! * [`session`] — ход диалога, скоринг, анализ, финал;
 //! * [`stats`] — статистика, активность, лидерборд;
 //! * [`settings`] — глобальные и пользовательские настройки;
-//! * [`provider`] — провайдеры, ключи, назначение моделей по ролям.
+//! * [`provider`] — провайдеры, ключи, назначение моделей по ролям;
+//! * [`voice`] — голос: синтез речи (TTS) и распознавание (STT);
+//! * [`audit`] — чтение аудит-лога (admin).
 
+pub mod audit;
 pub mod auth;
 pub mod provider;
 pub mod scenario;
 pub mod session;
 pub mod settings;
 pub mod stats;
+pub mod voice;
 
 use std::sync::Arc;
 
@@ -21,12 +25,14 @@ use crate::error::AppResult;
 use crate::infrastructure::crypto::SecretCipher;
 use crate::infrastructure::db::repos::SqliteRepos;
 use crate::infrastructure::providers::ProviderFactory;
+use audit::AuditService;
 use auth::AuthService;
 use provider::ProviderService;
 use scenario::ScenarioService;
 use session::SessionService;
 use settings::SettingsService;
 use stats::StatsService;
+use voice::VoiceService;
 
 // Реэкспорт прав — подмодули используют через `super::Permission`;
 // `AuthContext`/`authorize` нужны только testsupport (cfg(test)).
@@ -42,6 +48,8 @@ pub struct Services {
     pub stats: Arc<StatsService>,
     pub settings: Arc<SettingsService>,
     pub providers: Arc<ProviderService>,
+    pub voice: Arc<VoiceService>,
+    pub audit: Arc<AuditService>,
 }
 
 impl Services {
@@ -70,6 +78,8 @@ impl Services {
             settings.clone(),
         ));
         let stats = Arc::new(StatsService::new(repos.clone()));
+        let audit = Arc::new(AuditService::new(repos.clone()));
+        let voice = Arc::new(VoiceService::new(providers.clone()));
 
         Ok(Self {
             repos,
@@ -80,6 +90,8 @@ impl Services {
             stats,
             settings,
             providers,
+            voice,
+            audit,
         })
     }
 }
@@ -110,10 +122,15 @@ pub(crate) mod testsupport {
                 jwt_ttl_seconds: 3600,
                 admin_password: "admin123".into(),
                 encryption_secret: "test-encryption-secret".into(),
+                allowed_origins: Vec::new(),
             },
             storage: StorageConfig {
                 db_path: PathBuf::from(":memory:"),
                 models_dir: PathBuf::from("models"),
+            },
+            rate_limit: crate::config::RateLimitConfig {
+                auth_max: 0,
+                auth_window_secs: 60,
             },
         }
     }

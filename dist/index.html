@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ru" data-theme="dark" data-font="md">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <title>Арена Переговоров</title>
+  <link rel="icon" href="/static/avatar.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/app.css">
+  <script>
+    // Ранняя установка темы/шрифта — до загрузки CSS и рендера, без flash
+    (function () {
+      try {
+        var theme = localStorage.getItem('na.theme') || 'dark';
+        if (theme === 'system') {
+          theme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+        }
+        document.documentElement.setAttribute('data-theme', theme);
+        var font = localStorage.getItem('na.fontSize') || 'md';
+        document.documentElement.setAttribute('data-font', font);
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+</head>
+<body>
+  <div id="app" class="app-root"></div>
+  <div id="toast-root" class="toast-root" aria-live="polite"></div>
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>
