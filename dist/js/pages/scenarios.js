@@ -6,14 +6,8 @@ import {
 } from '../core/components.js';
 import { request, ApiError } from '../core/api.js';
 import { navigate } from '../core/router.js';
+import { t, difficultyLabel } from '../core/i18n.js';
 
-const DIFFS = [
-  { id: '', label: 'Все' },
-  { id: 'easy', label: 'Начальная' },
-  { id: 'medium', label: 'Средняя' },
-  { id: 'hard', label: 'Сложная' },
-];
-const DIFF_LABEL = { easy: 'Начальная', medium: 'Средняя', hard: 'Сложная' };
 const DIFF_VARIANT = { easy: 'success', medium: 'warning', hard: 'danger' };
 
 function truncate(text, max = 150) {
@@ -22,17 +16,17 @@ function truncate(text, max = 150) {
 }
 
 async function startSession(scenarioId, btn) {
-  if (btn) { btn.disabled = true; btn.textContent = 'Старт…'; }
+  if (btn) { btn.disabled = true; btn.textContent = t('action.starting'); }
   try {
     const started = await request('/sessions', {
       method: 'POST',
       body: { scenario_id: scenarioId },
     });
-    toast('Сессия начата — удачи!', 'success');
+    toast(t('scenarios.started'), 'success');
     navigate(`#/session/${started.session.id}`);
   } catch (err) {
-    toast(err instanceof ApiError ? err.message : 'Не удалось начать сессию', 'error');
-    if (btn) { btn.disabled = false; btn.textContent = 'Начать'; }
+    toast(err instanceof ApiError ? err.message : t('scenarios.startFail'), 'error');
+    if (btn) { btn.disabled = false; btn.textContent = t('action.start'); }
   }
 }
 
@@ -50,41 +44,46 @@ function detailRow(label, value) {
 
 function openDetails(s, onStart) {
   const p = s.partner_personality || {};
-  const personalityBits = [p.tone && `тон: ${p.tone}`, p.style && `манера: ${p.style}`, p.traits && `черты: ${p.traits}`]
-    .filter(Boolean).join(', ');
+  const personalityBits = [
+    p.tone && `тон: ${p.tone}`,
+    p.style && `манера: ${p.style}`,
+    p.traits && `черты: ${p.traits}`,
+  ].filter(Boolean).join(', ');
 
   const body = h('div.stack', { style: { gap: 'var(--sp-4)' } },
     h('div.row', null,
-      badge(DIFF_LABEL[s.difficulty] || s.difficulty, DIFF_VARIANT[s.difficulty] || 'neutral'),
+      badge(difficultyLabel(s.difficulty) || s.difficulty, DIFF_VARIANT[s.difficulty] || 'neutral'),
       badge(s.sphere || '—', 'info'),
-      s.is_active ? badge('Активный', 'success') : badge('Черновик', 'neutral')
+      s.is_active ? badge(t('scenarios.active'), 'success') : badge(t('scenarios.draft'), 'neutral')
     ),
     h('p', { text: s.description || '', style: { color: 'var(--muted)' } }),
 
     h('div.grid-2', null,
       h('div.card', null, h('div.card-body.stack', { style: { gap: 'var(--sp-3)' } },
-        h('div.card-title', { text: 'Ты' }),
-        detailRow('Роль', s.player_role),
-        detailRow('Компания', s.player_company),
-        detailRow('Цель', s.player_goal),
-        detailRow('BATNA', s.player_batna)
+        h('div.card-title', { text: t('scenarios.you') }),
+        detailRow(t('scenarios.role'), s.player_role),
+        detailRow(t('scenarios.company'), s.player_company),
+        detailRow(t('scenarios.goal'), s.player_goal),
+        detailRow(t('scenarios.batna'), s.player_batna)
       )),
       h('div.card', null, h('div.card-body.stack', { style: { gap: 'var(--sp-3)' } },
-        h('div.card-title', { text: `Собеседник: ${s.partner_name}` }),
-        detailRow('Роль', s.partner_role),
-        detailRow('Компания', s.partner_company),
-        detailRow('Цель', s.partner_goal),
-        detailRow('Доп. цели', s.partner_goals),
-        detailRow('BATNA', s.partner_batna),
-        detailRow('Личность', personalityBits || '—')
+        h('div.card-title', { text: t('scenarios.partner', { name: s.partner_name }) }),
+        detailRow(t('scenarios.role'), s.partner_role),
+        detailRow(t('scenarios.company'), s.partner_company),
+        detailRow(t('scenarios.goal'), s.partner_goal),
+        detailRow(t('scenarios.extraGoals'), s.partner_goals),
+        detailRow(t('scenarios.batna'), s.partner_batna),
+        detailRow(t('scenarios.personality'), personalityBits || '—')
       ))
     ),
 
     s.endings && s.endings.length
       ? h('div.stack', { style: { gap: 'var(--sp-2)' } },
-          h('div.small.muted', { text: 'Возможные финалы' }),
+          h('div.small.muted', { text: t('scenarios.endings') }),
           h('div.row', null, ...s.endings.map((e) =>
-            h('span.badge.badge-accent.no-dot', { text: `${e.title} (от ${e.min_score})` })))
+            h('span.badge.badge-accent.no-dot', {
+              text: t('scenarios.fromScore', { title: e.title, score: e.min_score }),
+            })))
         )
       : null
   );
@@ -93,8 +92,8 @@ function openDetails(s, onStart) {
     title: s.title,
     body,
     actions: [
-      { label: 'Закрыть', variant: 'secondary' },
-      { label: 'Начать', variant: 'primary', onClick: () => { onStart(); } },
+      { label: t('action.close'), variant: 'secondary' },
+      { label: t('action.start'), variant: 'primary', onClick: () => { onStart(); } },
     ],
   });
 }
@@ -102,12 +101,12 @@ function openDetails(s, onStart) {
 function scenarioCard(s) {
   const startBtn = h('button.btn.btn-primary.btn-sm', {
     type: 'button',
-    text: 'Начать',
+    text: t('action.start'),
     onClick: () => startSession(s.id, startBtn),
   });
   const moreBtn = h('button.btn.btn-ghost.btn-sm', {
     type: 'button',
-    text: 'Подробнее',
+    text: t('action.more'),
     onClick: () => openDetails(s, () => startSession(s.id, startBtn)),
   });
 
@@ -115,13 +114,13 @@ function scenarioCard(s) {
     h('div.card-body.stack', { style: { gap: 'var(--sp-3)' } },
       h('div.row-between', null,
         h('div.card-title', { text: s.title }),
-        badge(DIFF_LABEL[s.difficulty] || s.difficulty, DIFF_VARIANT[s.difficulty] || 'neutral')
+        badge(difficultyLabel(s.difficulty) || s.difficulty, DIFF_VARIANT[s.difficulty] || 'neutral')
       ),
       h('div.small.muted', { text: s.sphere || '' }),
       h('div', { text: truncate(s.description, 150), style: { color: 'var(--muted)' } }),
       s.player_goal
         ? h('div.small', null,
-            h('span.muted', { text: 'Цель: ' }),
+            h('span.muted', { text: t('home.goal') }),
             h('span', { text: truncate(s.player_goal, 110) }))
         : null,
       h('div.row', null, startBtn, moreBtn)
@@ -141,8 +140,8 @@ export function renderPage(root, params = {}) {
 
   const searchInput = h('input.input', {
     type: 'search',
-    placeholder: 'Поиск по названию…',
-    'aria-label': 'Поиск по названию',
+    placeholder: t('scenarios.search'),
+    'aria-label': t('scenarios.search'),
   });
   searchInput.addEventListener('input', () => {
     query = searchInput.value.trim().toLowerCase();
@@ -155,7 +154,13 @@ export function renderPage(root, params = {}) {
     renderGrid();
   }
 
-  const filterRow = h('div.row', null, ...DIFFS.map((d) => {
+  const diffs = [
+    { id: '', label: t('diff.all') },
+    { id: 'easy', label: t('diff.easy') },
+    { id: 'medium', label: t('diff.medium') },
+    { id: 'hard', label: t('diff.hard') },
+  ];
+  const filterRow = h('div.row', null, ...diffs.map((d) => {
     const b = h('button.tab', {
       type: 'button',
       class: `tab${d.id === '' ? ' is-active' : ''}`,
@@ -181,10 +186,10 @@ export function renderPage(root, params = {}) {
     if (!list.length) {
       grid.replaceChildren(emptyState({
         icon: '∅',
-        title: 'Ничего не найдено',
+        title: t('scenarios.notFound'),
         description: all.length
-          ? 'Попробуйте изменить фильтр или поисковый запрос.'
-          : 'Сценарии ещё не опубликованы администратором.',
+          ? t('scenarios.notFoundFilter')
+          : t('scenarios.notPublished'),
       }));
       return;
     }
@@ -195,8 +200,8 @@ export function renderPage(root, params = {}) {
     marker,
     h('div.page-header', null,
       h('div', null,
-        h('h1', { text: 'Сценарии' }),
-        h('div.page-sub', null, 'Выберите переговоры и начните диалог с ИИ')
+        h('h1', { text: t('scenarios.title') }),
+        h('div.page-sub', null, t('scenarios.sub'))
       )
     ),
     h('div.row.mt-3.mb-4', { style: { justifyContent: 'space-between' } },
@@ -215,11 +220,11 @@ export function renderPage(root, params = {}) {
     if (!isCurrent()) return;
     grid.replaceChildren(emptyState({
       icon: '⚠',
-      title: 'Не удалось загрузить сценарии',
-      description: err instanceof ApiError ? err.message : 'Ошибка запроса',
+      title: t('scenarios.loadError'),
+      description: err instanceof ApiError ? err.message : t('common.error'),
       action: h('button.btn.btn-secondary', {
         type: 'button',
-        text: 'Повторить',
+        text: t('action.retry'),
         onClick: () => { if (isCurrent()) renderPage(root, params); },
       }),
     }));

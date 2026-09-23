@@ -239,7 +239,8 @@ impl SessionRepository for SqliteSessionRepo {
                     COALESCE(SUM(CASE WHEN status = 'abandoned' THEN 1 ELSE 0 END), 0),
                     COALESCE(MAX(CASE WHEN status = 'finished' THEN total_score END), 0),
                     COALESCE(AVG(CASE WHEN status = 'finished' THEN total_score END), 0),
-                    MAX(created_at)
+                    MAX(created_at),
+                    COALESCE(SUM(CASE WHEN status = 'finished' AND total_score > 0 THEN total_score ELSE 0 END), 0)
              FROM sessions WHERE user_id = ?1",
             params![user_id],
             |r| {
@@ -250,10 +251,11 @@ impl SessionRepository for SqliteSessionRepo {
                 let best: i64 = r.get(4)?;
                 let avg: f64 = r.get(5)?;
                 let last: Option<String> = r.get(6)?;
-                Ok((total, finished, active, abandoned, best, avg, last))
+                let xp: i64 = r.get(7)?;
+                Ok((total, finished, active, abandoned, best, avg, last, xp))
             },
         )?;
-        let (total, finished, active, abandoned, best, avg, last) = row;
+        let (total, finished, active, abandoned, best, avg, last, xp) = row;
         Ok(UserSessionsAggregate {
             total: total.max(0) as u32,
             finished: finished.max(0) as u32,
@@ -262,6 +264,7 @@ impl SessionRepository for SqliteSessionRepo {
             best_score: best as i32,
             avg_score: avg as i32,
             last_session_at: last,
+            xp: xp.max(0),
         })
     }
 
@@ -271,7 +274,8 @@ impl SessionRepository for SqliteSessionRepo {
             "SELECT s.user_id, u.login, u.display_name, u.is_active,
                     COUNT(*) AS finished,
                     MAX(s.total_score) AS best_score,
-                    COALESCE(AVG(s.total_score), 0) AS avg_score
+                    COALESCE(AVG(s.total_score), 0) AS avg_score,
+                    COALESCE(SUM(CASE WHEN s.total_score > 0 THEN s.total_score ELSE 0 END), 0) AS xp
              FROM sessions s
              JOIN users u ON u.id = s.user_id
              WHERE s.status = 'finished' AND u.is_active = 1
@@ -279,10 +283,11 @@ impl SessionRepository for SqliteSessionRepo {
         )?;
         let rows = stmt.query_map([], |r| {
             // Колонки: 0=user_id, 1=login, 2=display_name, 3=is_active,
-            // 4=finished, 5=best_score, 6=avg_score.
+            // 4=finished, 5=best_score, 6=avg_score, 7=xp.
             let finished: i64 = r.get(4)?;
             let best: i64 = r.get(5)?;
             let avg: f64 = r.get(6)?;
+            let xp: i64 = r.get(7)?;
             Ok(LeaderboardRow {
                 user_id: r.get(0)?,
                 login: r.get(1)?,
@@ -291,6 +296,7 @@ impl SessionRepository for SqliteSessionRepo {
                 finished: finished.max(0) as u32,
                 best_score: best as i32,
                 avg_score: avg as i32,
+                xp: xp.max(0),
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)

@@ -9,7 +9,8 @@
 //! * `gemini` — Google AI (диалог);
 //! * `elevenlabs` — синтез речи;
 //! * `deepgram` — распознавание и синтез речи;
-//! * `local` — локальные модели (каталог; вызовы подключаются на этапе 7).
+//! * `local` — локальные модели (каталог; вызовы подключаются на этапе 7);
+//! * `mock` — демо-режим без API-ключей (офлайн-диалог и генерация сценариев).
 
 pub mod anthropic;
 pub mod deepgram;
@@ -17,6 +18,7 @@ pub mod elevenlabs;
 pub mod factory;
 pub mod gemini;
 pub mod local;
+pub mod mock;
 pub mod openai_compat;
 
 // Реэкспорт фабрики и локального менеджера — для composition root

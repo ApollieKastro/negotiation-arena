@@ -7,20 +7,16 @@ import {
 import { request, ApiError } from '../core/api.js';
 import { navigate } from '../core/router.js';
 import { accessToken } from '../core/store.js';
+import {
+  t, difficultyLabel, statusLabel, strategyLabel, spinLabel,
+} from '../core/i18n.js';
 
-const DIFF_LABEL = { easy: 'Начальная', medium: 'Средняя', hard: 'Сложная' };
 const DIFF_VARIANT = { easy: 'success', medium: 'warning', hard: 'danger' };
-const STRATEGY_LABEL = {
-  collaboration: 'Сотрудничество',
-  compromise: 'Компромисс',
-  confrontation: 'Конфронтация',
-};
 const STRATEGY_VARIANT = {
   collaboration: 'success',
   compromise: 'warning',
   confrontation: 'danger',
 };
-const SPIN_TITLES = { S: 'Ситуация', P: 'Проблема', I: 'Последствия', N: 'Ценность решения' };
 
 const BUBBLE_BASE = {
   maxWidth: 'min(78%, 640px)',
@@ -44,13 +40,13 @@ function deltaChip(delta) {
   const n = Number(delta) || 0;
   const cls = n > 0 ? 'badge-success' : n < 0 ? 'badge-danger' : 'badge-neutral';
   const label = n > 0 ? `+${n}` : String(n);
-  return h(`span.badge.no-dot.${cls}`, { text: `Балл ${label}` });
+  return h(`span.badge.no-dot.${cls}`, { text: t('session.scoreChip', { n: label }) });
 }
 
 function strategyBadge(slug) {
   if (!slug) return null;
   return badge(
-    STRATEGY_LABEL[slug] || slug,
+    strategyLabel(slug) || slug,
     STRATEGY_VARIANT[slug] || 'neutral',
     { dot: false }
   );
@@ -59,7 +55,7 @@ function strategyBadge(slug) {
 function spinBadge(code) {
   if (!code) return null;
   return h('span.badge.badge-info.no-dot', {
-    title: SPIN_TITLES[code] || code,
+    title: spinLabel(code) || code,
     text: `SPIN ${code}`,
   });
 }
@@ -82,27 +78,27 @@ export function renderPage(root, params = {}) {
   const scoreEl = h('strong.num', { text: '—' });
   const turnsEl = h('span', { text: '—' });
   const statusEl = h('span', { text: '' });
-  const detailToggle = h('button.btn.btn-ghost.btn-sm', { type: 'button', text: 'Детали ▾' });
+  const detailToggle = h('button.btn.btn-ghost.btn-sm', { type: 'button', text: t('session.detailsClose') });
 
   const headerCard = h('div.card', null,
     h('div.card-body', null,
       h('div.row-between', null,
         h('div.stack', { style: { gap: '4px' } },
           h('div.row', null,
-            h('strong', { id: 'session-title', text: 'Сессия' }),
+            h('strong', { id: 'session-title', text: t('session.title') }),
             statusEl
           ),
           h('div.small.muted', { text: fmtDateTime(new Date().toISOString()) })
         ),
         h('div.row', null,
-          h('span.small.muted', null, 'Ходов: '),
+          h('span.small.muted', null, t('session.turns')),
           turnsEl,
-          h('span.small.muted', null, 'Балл: '),
+          h('span.small.muted', null, t('session.score')),
           scoreEl,
           detailToggle,
-          h('button.btn.btn-danger.btn-sm', { type: 'button', id: 'btn-abandon', text: 'Бросить' }),
-          h('button.btn.btn-primary.btn-sm', { type: 'button', id: 'btn-finish', text: 'Завершить' }),
-          h('button.btn.btn-secondary.btn-sm', { type: 'button', id: 'btn-result', text: 'Посмотреть результат', style: { display: 'none' } })
+          h('button.btn.btn-danger.btn-sm', { type: 'button', id: 'btn-abandon', text: t('action.abandon') }),
+          h('button.btn.btn-primary.btn-sm', { type: 'button', id: 'btn-finish', text: t('action.finish') }),
+          h('button.btn.btn-secondary.btn-sm', { type: 'button', id: 'btn-result', text: t('action.result'), style: { display: 'none' } })
         )
       ),
       h('div.mt-3', { id: 'session-details', style: { display: 'none' } })
@@ -128,23 +124,23 @@ export function renderPage(root, params = {}) {
   const thinking = h('div.row', {
     id: 'thinking',
     style: { display: 'none', color: 'var(--muted)' },
-  }, spinner('sm'), h('span.small', { text: 'Собеседник думает…' }));
+  }, spinner('sm'), h('span.small', { text: t('session.partnerThinking') }));
 
   const textarea = h('textarea.input', {
     rows: '2',
-    placeholder: 'Ваша реплика… (Ctrl+Enter — отправить)',
-    'aria-label': 'Текст реплики',
+    placeholder: t('session.composerPlaceholder'),
+    'aria-label': t('session.composerAria'),
     style: { resize: 'vertical', minHeight: '56px' },
   });
 
-  const sendBtn = h('button.btn.btn-primary', { type: 'button', text: 'Отправить' });
-  const micBtn = h('button.btn.btn-secondary', { type: 'button', text: '🎙 Записать', style: { display: 'none' } });
-  const voiceLabel = h('span.small.muted', { text: 'Голос: выкл.' });
+  const sendBtn = h('button.btn.btn-primary', { type: 'button', text: t('action.send') });
+  const micBtn = h('button.btn.btn-secondary', { type: 'button', text: t('session.record'), style: { display: 'none' } });
+  const voiceLabel = h('span.small.muted', { text: t('session.voiceOffLabel') });
 
   const voiceToggle = h('button.btn.btn-ghost.btn-sm', {
     type: 'button',
     'aria-pressed': 'false',
-    text: 'Голос — выкл.',
+    text: t('session.voiceOff'),
   });
 
   const textRow = h('div.row', { style: { alignItems: 'flex-end', gap: 'var(--sp-2)' } },
@@ -162,10 +158,11 @@ export function renderPage(root, params = {}) {
   const fatalError = h('div');
 
   root.replaceChildren(
+    marker,
     h('div.page-header', null,
       h('div', null,
-        h('h1', { text: 'Сессия' }),
-        h('div.page-sub', { text: 'Диалог с собеседником' })
+        h('h1', { text: t('session.title') }),
+        h('div.page-sub', { text: t('session.sub') })
       )
     ),
     fatalError,
@@ -186,12 +183,12 @@ export function renderPage(root, params = {}) {
   detailToggle.addEventListener('click', () => {
     detailsOpen = !detailsOpen;
     detailsHost.style.display = detailsOpen ? '' : 'none';
-    detailToggle.textContent = detailsOpen ? 'Детали ▴' : 'Детали ▾';
+    detailToggle.textContent = detailsOpen ? t('session.detailsOpen') : t('session.detailsClose');
   });
 
   function renderDetails() {
     if (!scenario) {
-      detailsHost.replaceChildren(h('div.small.muted', { text: 'Сценарий не загружен.' }));
+      detailsHost.replaceChildren(h('div.small.muted', { text: t('session.scenarioNotLoaded') }));
       return;
     }
     const sc = scenario;
@@ -211,31 +208,31 @@ export function renderPage(root, params = {}) {
 
     const tabsEl = tabs({
       items: [
-        { id: 'me', label: 'Ты' },
-        { id: 'partner', label: 'Собеседник' },
-        { id: 'company', label: 'Компания' },
+        { id: 'me', label: t('session.tabMe') },
+        { id: 'partner', label: t('session.tabPartner') },
+        { id: 'company', label: t('session.tabCompany') },
       ],
       active: 'me',
     });
 
     const panes = {
-      me: infoBlock('Ты', [
-        ['Роль', sc.player_role],
-        ['Компания', sc.player_company],
-        ['Цель', sc.player_goal],
-        ['BATNA', sc.player_batna],
+      me: infoBlock(t('session.tabMe'), [
+        [t('scenarios.role'), sc.player_role],
+        [t('scenarios.company'), sc.player_company],
+        [t('scenarios.goal'), sc.player_goal],
+        [t('scenarios.batna'), sc.player_batna],
       ]),
-      partner: infoBlock(`Собеседник: ${sc.partner_name}`, [
-        ['Роль', sc.partner_role],
-        ['Компания', sc.partner_company],
-        ['Цель', sc.partner_goal],
-        ['Личность', personality],
+      partner: infoBlock(t('scenarios.partner', { name: sc.partner_name }), [
+        [t('scenarios.role'), sc.partner_role],
+        [t('scenarios.company'), sc.partner_company],
+        [t('scenarios.goal'), sc.partner_goal],
+        [t('scenarios.personality'), personality],
       ]),
-      company: infoBlock('Контекст', [
-        ['Сфера', sc.sphere],
-        ['Сложность', DIFF_LABEL[sc.difficulty] || sc.difficulty],
-        ['Твоя компания', sc.player_company],
-        ['Его компания', sc.partner_company],
+      company: infoBlock(t('session.context'), [
+        [t('session.sphere'), sc.sphere],
+        [t('session.difficulty'), difficultyLabel(sc.difficulty) || sc.difficulty],
+        [t('session.yourCompany'), sc.player_company],
+        [t('session.partnerCompany'), sc.partner_company],
       ]),
     };
 
@@ -247,7 +244,7 @@ export function renderPage(root, params = {}) {
     detailsHost.replaceChildren(
       h('div.row', null,
         h('span.small.muted', { text: sc.title }),
-        badge(DIFF_LABEL[sc.difficulty] || sc.difficulty, DIFF_VARIANT[sc.difficulty] || 'neutral')
+        badge(difficultyLabel(sc.difficulty) || sc.difficulty, DIFF_VARIANT[sc.difficulty] || 'neutral')
       ),
       tabsEl,
       paneHost
@@ -284,7 +281,7 @@ export function renderPage(root, params = {}) {
       },
     },
       !isPlayer
-        ? h('div.small.muted', { text: scenario ? scenario.partner_name : 'Собеседник', style: { marginBottom: '4px' } })
+        ? h('div.small.muted', { text: scenario ? scenario.partner_name : t('session.partner'), style: { marginBottom: '4px' } })
         : null,
       h('div', { text: msg.content }),
       meta.length
@@ -313,12 +310,12 @@ export function renderPage(root, params = {}) {
   // ── Обновление шапки ──
   function updateHeader() {
     if (!session) return;
-    titleEl.textContent = scenario ? scenario.title : 'Сессия';
+    titleEl.textContent = scenario ? scenario.title : t('session.title');
     scoreEl.textContent = String(session.total_score ?? 0);
     turnsEl.textContent = String(session.turn_count ?? 0);
     const st = session.status;
     statusEl.replaceChildren(badge(
-      st === 'active' ? 'Активна' : st === 'finished' ? 'Завершена' : 'Брошена',
+      statusLabel(st),
       st === 'active' ? 'info' : st === 'finished' ? 'success' : 'neutral'
     ));
     applyStatusUI();
@@ -333,7 +330,7 @@ export function renderPage(root, params = {}) {
     btnAbandon.style.display = active ? '' : 'none';
     btnResult.style.display = active ? 'none' : '';
     if (!active) {
-      textarea.placeholder = 'Сессия завершена — просмотрите результат.';
+      textarea.placeholder = t('session.finishedPlaceholder');
       micBtn.style.display = 'none';
     }
   }
@@ -341,12 +338,12 @@ export function renderPage(root, params = {}) {
   function setBusy(v) {
     busy = v;
     sendBtn.disabled = v || !session || session.status !== 'active';
-    sendBtn.textContent = v ? 'Отправка…' : 'Отправить';
+    sendBtn.textContent = v ? t('action.sending') : t('action.send');
     textarea.disabled = v || !session || session.status !== 'active';
     thinkingEl.style.display = v ? '' : 'none';
     if (v) scrollFeed();
     applyStatusUI();
-    if (!v && session && session.status === 'active') sendBtn.textContent = 'Отправить';
+    if (!v && session && session.status === 'active') sendBtn.textContent = t('action.send');
   }
 
   // ── Ход ──
@@ -390,22 +387,22 @@ export function renderPage(root, params = {}) {
 
       const d = Number(out.player_score_delta) || 0;
       toast(
-        d > 0 ? `Отличная реплика! +${d} к баллу` :
-        d < 0 ? `Слабая реплика: ${d} к баллу` :
-        'Ход засчитан, балл без изменений',
+        d > 0 ? t('session.scorePlus', { n: d }) :
+        d < 0 ? t('session.scoreMinus', { n: d }) :
+        t('session.scoreZero'),
         d > 0 ? 'success' : d < 0 ? 'warning' : 'info'
       );
     } catch (err) {
       if (!isCurrent()) return;
       textarea.value = text;
-      const msg = err instanceof ApiError ? err.message : 'Не удалось отправить ход';
+      const msg = err instanceof ApiError ? err.message : t('session.sendFail');
       if (err instanceof ApiError && err.status === 400 &&
           (/лимит ходов/i.test(msg) || /сессия уже завершена/i.test(msg) || /заверш/i.test(msg))) {
         toast(msg, 'warning', 6000);
         const ok = await confirmModal({
-          title: 'Завершить сессию?',
-          message: `${msg}. Завершить сейчас и посмотреть отчёт?`,
-          confirmText: 'Завершить',
+          title: t('session.finishNowTitle'),
+          message: `${msg}. ${t('session.finishMsg')}`,
+          confirmText: t('action.finish'),
         });
         if (ok) await doFinish();
       } else {
@@ -438,7 +435,7 @@ export function renderPage(root, params = {}) {
     const btn = h('button.icon-btn', {
       type: 'button',
       'data-tts': '1',
-      title: 'Озвучить реплику',
+      title: t('session.speak'),
       text: '🔊',
       style: { fontSize: '14px', verticalAlign: 'middle' },
       onClick: () => playTts(text),
@@ -460,7 +457,7 @@ export function renderPage(root, params = {}) {
         body: JSON.stringify({ text }),
       });
       if (!res.ok) {
-        let message = `Ошибка TTS (${res.status})`;
+        let message = `TTS error (${res.status})`;
         try {
           const data = await res.json();
           if (data && data.error) message = data.error;
@@ -475,7 +472,7 @@ export function renderPage(root, params = {}) {
       audio.onended = () => URL.revokeObjectURL(url);
       await audio.play();
     } catch {
-      toast('Не удалось воспроизвести голос', 'error');
+      toast(t('session.playFail'), 'error');
     }
   }
 
@@ -484,10 +481,8 @@ export function renderPage(root, params = {}) {
     if (!session || session.status !== 'active') return;
     voiceOn = !voiceOn;
     voiceToggle.setAttribute('aria-pressed', voiceOn ? 'true' : 'false');
-    voiceToggle.textContent = voiceOn ? 'Голос — вкл.' : 'Голос — выкл.';
-    voiceLabel.textContent = voiceOn
-      ? 'Голос: включён — говорите вместо текста'
-      : 'Голос: выкл.';
+    voiceToggle.textContent = voiceOn ? t('session.voiceOn') : t('session.voiceOff');
+    voiceLabel.textContent = voiceOn ? t('session.voiceOnLabel') : t('session.voiceOffLabel');
     textRow.style.display = voiceOn ? 'none' : '';
     micBtn.style.display = voiceOn ? '' : 'none';
     applyStatusUI();
@@ -499,7 +494,7 @@ export function renderPage(root, params = {}) {
       return;
     }
     if (!navigator.mediaDevices || !window.MediaRecorder) {
-      toast('Запись аудио не поддерживается браузером', 'error');
+      toast(t('session.noMedia'), 'error');
       return;
     }
     try {
@@ -508,24 +503,24 @@ export function renderPage(root, params = {}) {
       mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
       mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size) recChunks.push(e.data); };
       mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop());
+        stream.getTracks().forEach((tr) => tr.stop());
         recState = 'idle';
-        micBtn.textContent = '🎙 Записать';
+        micBtn.textContent = t('session.record');
         micBtn.classList.remove('btn-danger');
         micBtn.classList.add('btn-secondary');
         const blob = new Blob(recChunks, { type: 'audio/webm' });
         recChunks = [];
-        if (!blob.size) { toast('Запись пуста — попробуйте ещё', 'warning'); return; }
+        if (!blob.size) { toast(t('session.recordEmpty'), 'warning'); return; }
         await transcribe(blob);
       };
       mediaRecorder.start();
       recState = 'recording';
-      micBtn.textContent = '⏹ Остановить';
+      micBtn.textContent = t('session.stop');
       micBtn.classList.remove('btn-secondary');
       micBtn.classList.add('btn-danger');
-      toast('Идёт запись — нажмите, чтобы остановить', 'info', 2500);
+      toast(t('session.recording'), 'info', 2500);
     } catch {
-      toast('Нет доступа к микрофону', 'error');
+      toast(t('session.noMic'), 'error');
     }
   });
 
@@ -533,27 +528,27 @@ export function renderPage(root, params = {}) {
     const fd = new FormData();
     fd.append('file', blob, 'recording.webm');
     micBtn.disabled = true;
-    micBtn.textContent = 'Распознаём…';
+    micBtn.textContent = t('session.recognizing');
     try {
       const res = await request('/voice/stt', { method: 'POST', body: fd });
       const text = (res && res.text ? String(res.text) : '').trim();
-      if (!text) { toast('Речь не распознана', 'warning'); return; }
+      if (!text) { toast(t('session.speechEmpty'), 'warning'); return; }
       textarea.value = text;
       voiceOn = false;
       voiceToggle.setAttribute('aria-pressed', 'false');
-      voiceToggle.textContent = 'Голос — выкл.';
-      voiceLabel.textContent = 'Голос: выкл.';
+      voiceToggle.textContent = t('session.voiceOff');
+      voiceLabel.textContent = t('session.voiceOffLabel');
       textRow.style.display = '';
       micBtn.style.display = 'none';
-      toast('Распознано — проверьте текст и отправьте', 'success');
+      toast(t('session.recognized'), 'success');
       textarea.focus();
     } catch (err) {
-      const msg = err instanceof ApiError ? err.message : 'Ошибка распознавания';
+      const msg = err instanceof ApiError ? err.message : t('common.error');
       if (err instanceof ApiError && err.status === 503) toastVoice503(msg);
       else toast(msg, 'error');
     } finally {
       micBtn.disabled = false;
-      micBtn.textContent = '🎙 Записать';
+      micBtn.textContent = t('session.record');
       applyStatusUI();
     }
   }
@@ -562,36 +557,36 @@ export function renderPage(root, params = {}) {
   async function doFinish() {
     try {
       await request(`/sessions/${id}/finish`, { method: 'POST' });
-      toast('Сессия завершена!', 'success');
+      toast(t('session.finishOk'), 'success');
       navigate(`#/result/${id}`);
     } catch (err) {
-      toast(err instanceof ApiError ? err.message : 'Не удалось завершить', 'error');
+      toast(err instanceof ApiError ? err.message : t('session.finishFail'), 'error');
     }
   }
 
   btnFinish.addEventListener('click', async () => {
     const ok = await confirmModal({
-      title: 'Завершить сессию?',
-      message: 'Диалог закончится, будет построен отчёт с оценкой и рекомендациями.',
-      confirmText: 'Завершить',
+      title: t('session.finishTitle'),
+      message: t('session.finishMsg'),
+      confirmText: t('action.finish'),
     });
     if (ok) await doFinish();
   });
 
   btnAbandon.addEventListener('click', async () => {
     const ok = await confirmModal({
-      title: 'Бросить сессию?',
-      message: 'Прогресс не сохранится в отчёт. Сессия будет помечена как брошенная.',
-      confirmText: 'Бросить',
+      title: t('session.abandonTitle'),
+      message: t('session.abandonMsg'),
+      confirmText: t('action.abandon'),
       danger: true,
     });
     if (!ok) return;
     try {
       await request(`/sessions/${id}/abandon`, { method: 'POST' });
-      toast('Сессия прервана', 'info');
+      toast(t('session.abandonOk'), 'info');
       navigate('#/history');
     } catch (err) {
-      toast(err instanceof ApiError ? err.message : 'Не удалось прервать сессию', 'error');
+      toast(err instanceof ApiError ? err.message : t('session.abandonFail'), 'error');
     }
   });
 
@@ -602,11 +597,11 @@ export function renderPage(root, params = {}) {
     marker,
     h('div.page-header', null,
       h('div', null,
-        h('h1', { text: 'Сессия' }),
-        h('div.page-sub', { text: 'Загружаем…' })
+        h('h1', { text: t('session.title') }),
+        h('div.page-sub', { text: t('session.loading') })
       )
     ),
-    h('div.card', null, h('div.card-body', null, spinner('lg', { label: 'Загружаем сессию…' })))
+    h('div.card', null, h('div.card-body', null, spinner('lg', { label: t('session.loadingSession') })))
   );
 
   Promise.all([
@@ -631,7 +626,7 @@ export function renderPage(root, params = {}) {
       marker,
       h('div.page-header', null,
         h('div', null,
-          h('h1', { text: 'Сессия' }),
+          h('h1', { text: t('session.title') }),
           h('div.page-sub', { text: fmtDateTime(s.created_at) })
         )
       ),
@@ -640,7 +635,6 @@ export function renderPage(root, params = {}) {
       composer
     );
 
-    // Переподключаем обработчики, т.к. элементы те же (headerCard/feed/composer сохранены)
     renderDetails();
     updateHeader();
     renderFeed(messages || []);
@@ -652,17 +646,17 @@ export function renderPage(root, params = {}) {
       marker,
       h('div.page-header', null,
         h('div', null,
-          h('h1', { text: 'Сессия' }),
-          h('div.page-sub', { text: 'Ошибка загрузки' })
+          h('h1', { text: t('session.title') }),
+          h('div.page-sub', { text: t('session.loadError') })
         )
       ),
       emptyState({
         icon: '⚠',
-        title: 'Не удалось открыть сессию',
-        description: err instanceof ApiError ? err.message : 'Ошибка запроса',
+        title: t('session.openError'),
+        description: err instanceof ApiError ? err.message : t('common.error'),
         action: h('button.btn.btn-secondary', {
           type: 'button',
-          text: 'В историю',
+          text: t('action.history'),
           onClick: () => navigate('#/history'),
         }),
       })

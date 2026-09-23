@@ -76,6 +76,10 @@ pub enum ProviderKind {
     /// Локальный запуск через внешнюю команду/сервис (whisper.cpp, Piper и т.п.).
     #[serde(rename = "local")]
     Local,
+    /// Демо-режим без API-ключа: офлайн-собеседник и генератор сценариев
+    /// для демонстрации и разработки, когда ключи ещё не подключены.
+    #[serde(rename = "mock")]
+    Mock,
 }
 
 impl ProviderKind {
@@ -87,6 +91,7 @@ impl ProviderKind {
             "elevenlabs" => Some(ProviderKind::ElevenLabs),
             "deepgram" => Some(ProviderKind::Deepgram),
             "local" => Some(ProviderKind::Local),
+            "mock" => Some(ProviderKind::Mock),
             _ => None,
         }
     }
@@ -99,6 +104,7 @@ impl ProviderKind {
             ProviderKind::ElevenLabs => "elevenlabs",
             ProviderKind::Deepgram => "deepgram",
             ProviderKind::Local => "local",
+            ProviderKind::Mock => "mock",
         }
     }
 
@@ -111,6 +117,7 @@ impl ProviderKind {
             ProviderKind::ElevenLabs,
             ProviderKind::Deepgram,
             ProviderKind::Local,
+            ProviderKind::Mock,
         ]
     }
 
@@ -122,19 +129,23 @@ impl ProviderKind {
             ProviderKind::ElevenLabs => "ElevenLabs",
             ProviderKind::Deepgram => "Deepgram",
             ProviderKind::Local => "Локальный",
+            ProviderKind::Mock => "Демо (офлайн)",
         }
     }
 
-    /// API-ключ не нужен (локальные модели работают без ключа).
+    /// API-ключ не нужен (локальные модели и демо-режим работают без ключа).
     pub fn requires_api_key(&self) -> bool {
-        !matches!(self, ProviderKind::Local)
+        !matches!(self, ProviderKind::Local | ProviderKind::Mock)
     }
 
     /// Провайдер умеет диалог (LLM-порт доступен).
     pub fn supports_chat(&self) -> bool {
         matches!(
             self,
-            ProviderKind::OpenAiCompatible | ProviderKind::Anthropic | ProviderKind::Gemini
+            ProviderKind::OpenAiCompatible
+                | ProviderKind::Anthropic
+                | ProviderKind::Gemini
+                | ProviderKind::Mock
         )
     }
 
@@ -203,5 +214,7 @@ mod tests {
         assert!(ProviderKind::Deepgram.supports_stt());
         assert!(ProviderKind::Deepgram.supports_tts());
         assert!(!ProviderKind::Local.requires_api_key());
+        assert!(ProviderKind::Mock.supports_chat());
+        assert!(!ProviderKind::Mock.requires_api_key());
     }
 }

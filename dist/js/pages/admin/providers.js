@@ -13,6 +13,7 @@ const KINDS = [
   { value: 'elevenlabs', label: 'ElevenLabs' },
   { value: 'deepgram', label: 'Deepgram' },
   { value: 'local', label: 'Локальный' },
+  { value: 'mock', label: 'Демо (офлайн)' },
 ];
 
 const MODEL_ROLES = [
@@ -262,7 +263,7 @@ export function renderPage(root, params = {}) {
       label: 'API-ключ', type: 'password',
       hint: isEdit
         ? 'Оставьте пустым — ключ не изменится. Ключ шифруется и хранится на сервере.'
-        : 'Обязателен для облачных провайдеров (кроме «Локальный»).',
+        : 'Обязателен для облачных провайдеров. Не нужен для «Локальный»/«Демо» и для OpenAI-совместимых с локальным Base URL (Ollama: http://127.0.0.1:11434/v1).',
     });
     const enabledF = field({
       label: 'Включён', type: 'select',

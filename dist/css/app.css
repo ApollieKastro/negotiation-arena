@@ -497,6 +497,31 @@ select.input { appearance: none; background-image: linear-gradient(45deg, transp
   font-size: 0.85rem;
   font-weight: 900;
   flex-shrink: 0;
+  overflow: hidden;
+}
+.brand-mark-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: inherit;
+  display: block;
+}
+.brand-logo {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  object-fit: contain;
+}
+.brand-logo--sm {
+  width: 120px;
+  height: auto;
+}
+.sidebar-brand-sub {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding-left: 2px;
 }
 .sidebar-nav {
   flex: 1;
@@ -862,7 +887,38 @@ select.input { appearance: none; background-image: linear-gradient(45deg, transp
 .auth-card {
   width: min(440px, 100%);
   padding: var(--sp-6);
+  position: relative;
   animation: fade-up 0.3s ease;
+}
+.auth-lang {
+  position: absolute;
+  top: var(--sp-3);
+  right: var(--sp-3);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  line-height: 1;
+}
+.auth-lang-btn {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 999px;
+}
+.auth-lang-btn:hover { color: var(--text); }
+.auth-lang-btn.is-active {
+  background: var(--accent);
+  color: var(--accent-contrast);
 }
 .auth-brand {
   display: flex;
@@ -873,6 +929,95 @@ select.input { appearance: none; background-image: linear-gradient(45deg, transp
 .auth-brand .brand-mark { width: 40px; height: 40px; font-size: 1.1rem; border-radius: 12px; }
 .auth-brand-text h1 { font-size: var(--fs-xl); }
 .auth-brand-text p { color: var(--muted); font-size: var(--fs-sm); }
+
+/* ── О команде ── */
+.team-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--sp-3);
+  padding: var(--sp-6) var(--sp-4);
+}
+.team-hero .brand-logo {
+  width: min(420px, 100%);
+  height: auto;
+}
+.team-hero h2 {
+  margin: 0;
+  font-size: var(--fs-xl);
+}
+.team-hero .team-tagline {
+  color: var(--muted);
+  max-width: 52ch;
+  margin: 0 auto;
+}
+.team-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--sp-4);
+}
+.team-member {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+.team-member-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 1.1rem;
+  flex-shrink: 0;
+}
+.team-member-name {
+  font-weight: 700;
+  font-size: var(--fs-md);
+}
+.team-member-role {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.team-member-bio {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  line-height: 1.45;
+}
+.team-member-meta {
+  font-size: var(--fs-xs);
+  color: var(--muted-2);
+}
+.team-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: auto;
+}
+.team-links a {
+  color: var(--accent);
+  font-size: var(--fs-sm);
+  font-weight: 650;
+  text-decoration: none;
+}
+.team-links a:hover { text-decoration: underline; }
+.team-empty {
+  text-align: center;
+  color: var(--muted);
+  padding: var(--sp-5);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+}
 .auth-tabs { display: flex; width: 100%; margin: var(--sp-5) 0 var(--sp-4); }
 .auth-tabs .tab { flex: 1; }
 .auth-form { display: flex; flex-direction: column; gap: var(--sp-4); }

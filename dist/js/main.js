@@ -2,6 +2,7 @@
 
 import { h, clear } from './core/dom.js';
 import * as store from './core/store.js';
+import { t, initLocale, getLocale } from './core/i18n.js';
 import { navigate, route, start, setFallback, setRoot, currentPath } from './core/router.js';
 import { avatar } from './core/components.js';
 
@@ -13,6 +14,7 @@ import * as resultPage from './pages/result.js';
 import * as settingsPage from './pages/settings.js';
 import * as historyPage from './pages/history.js';
 import * as leaderboardPage from './pages/leaderboard.js';
+import * as teamPage from './pages/team.js';
 
 import * as adminDashboard from './pages/admin/dashboard.js';
 import * as adminUsers from './pages/admin/users.js';
@@ -25,44 +27,50 @@ const appRoot = document.getElementById('app');
 
 // ── Таблица маршрутов ──
 // access: 'public' | 'user' | 'admin'; admin недоступен не-админу (→ #/)
+// title — ключ i18n (см. core/i18n.js)
 const ROUTES = [
-  { pattern: '/login', page: loginPage, access: 'public', title: 'Вход' },
-  { pattern: '/register', page: loginPage, access: 'public', title: 'Регистрация' },
+  { pattern: '/login', page: loginPage, access: 'public', titleKey: 'login.title' },
+  { pattern: '/register', page: loginPage, access: 'public', titleKey: 'login.registerTitle' },
 
-  { pattern: '/', page: homePage, access: 'user', title: 'Кабинет' },
-  { pattern: '/scenarios', page: scenariosPage, access: 'user', title: 'Сценарии' },
-  { pattern: '/session/:id', page: sessionPage, access: 'user', title: 'Сессия' },
-  { pattern: '/result/:id', page: resultPage, access: 'user', title: 'Результат' },
-  { pattern: '/settings', page: settingsPage, access: 'user', title: 'Настройки' },
-  { pattern: '/history', page: historyPage, access: 'user', title: 'История' },
-  { pattern: '/leaderboard', page: leaderboardPage, access: 'user', title: 'Лидерборд' },
+  { pattern: '/', page: homePage, access: 'user', titleKey: 'nav.home' },
+  { pattern: '/scenarios', page: scenariosPage, access: 'user', titleKey: 'scenarios.title' },
+  { pattern: '/session/:id', page: sessionPage, access: 'user', titleKey: 'session.title' },
+  { pattern: '/result/:id', page: resultPage, access: 'user', titleKey: 'result.title' },
+  { pattern: '/settings', page: settingsPage, access: 'user', titleKey: 'settings.title' },
+  { pattern: '/settings/team', page: teamPage, access: 'user', titleKey: 'team.title' },
+  { pattern: '/history', page: historyPage, access: 'user', titleKey: 'history.title' },
+  { pattern: '/leaderboard', page: leaderboardPage, access: 'user', titleKey: 'leaderboard.title' },
 
-  { pattern: '/admin', page: adminDashboard, access: 'admin', title: 'Админ-дашборд' },
-  { pattern: '/admin/users', page: adminUsers, access: 'admin', title: 'Пользователи' },
-  { pattern: '/admin/scenarios', page: adminScenarios, access: 'admin', title: 'Сценарии' },
-  { pattern: '/admin/providers', page: adminProviders, access: 'admin', title: 'Провайдеры' },
-  { pattern: '/admin/settings', page: adminSettings, access: 'admin', title: 'Настройки платформы' },
-  { pattern: '/admin/audit', page: adminAudit, access: 'admin', title: 'Аудит' },
+  { pattern: '/admin', page: adminDashboard, access: 'admin', titleKey: 'nav.dashboard' },
+  { pattern: '/admin/users', page: adminUsers, access: 'admin', titleKey: 'nav.users' },
+  { pattern: '/admin/scenarios', page: adminScenarios, access: 'admin', titleKey: 'nav.scenarios' },
+  { pattern: '/admin/providers', page: adminProviders, access: 'admin', titleKey: 'nav.providers' },
+  { pattern: '/admin/settings', page: adminSettings, access: 'admin', titleKey: 'nav.settings' },
+  { pattern: '/admin/audit', page: adminAudit, access: 'admin', titleKey: 'nav.audit' },
 ];
 
 // ── Shell ──
 let shell = null;
 
-const NAV_PLAY = [
-  { href: '#/', label: 'Кабинет', icon: '⌂', match: '/' },
-  { href: '#/scenarios', label: 'Сценарии', icon: '◈', match: '/scenarios' },
-  { href: '#/history', label: 'История', icon: '☰', match: '/history' },
-  { href: '#/leaderboard', label: 'Лидерборд', icon: '★', match: '/leaderboard' },
-];
+function navPlay() {
+  return [
+    { href: '#/', label: t('nav.home'), icon: '⌂', match: '/' },
+    { href: '#/scenarios', label: t('nav.scenarios'), icon: '◈', match: '/scenarios' },
+    { href: '#/history', label: t('nav.history'), icon: '☰', match: '/history' },
+    { href: '#/leaderboard', label: t('nav.leaderboard'), icon: '★', match: '/leaderboard' },
+  ];
+}
 
-const NAV_ADMIN = [
-  { href: '#/admin', label: 'Дашборд', icon: '▦', match: '/admin' },
-  { href: '#/admin/users', label: 'Пользователи', icon: '☺', match: '/admin/users' },
-  { href: '#/admin/scenarios', label: 'Сценарии', icon: '◈', match: '/admin/scenarios' },
-  { href: '#/admin/providers', label: 'Провайдеры', icon: '⚙', match: '/admin/providers' },
-  { href: '#/admin/settings', label: 'Настройки', icon: '☰', match: '/admin/settings' },
-  { href: '#/admin/audit', label: 'Аудит', icon: '≡', match: '/admin/audit' },
-];
+function navAdmin() {
+  return [
+    { href: '#/admin', label: t('nav.dashboard'), icon: '▦', match: '/admin' },
+    { href: '#/admin/users', label: t('nav.users'), icon: '☺', match: '/admin/users' },
+    { href: '#/admin/scenarios', label: t('nav.scenarios'), icon: '◈', match: '/admin/scenarios' },
+    { href: '#/admin/providers', label: t('nav.providers'), icon: '⚙', match: '/admin/providers' },
+    { href: '#/admin/settings', label: t('nav.settings'), icon: '☰', match: '/admin/settings' },
+    { href: '#/admin/audit', label: t('nav.audit'), icon: '≡', match: '/admin/audit' },
+  ];
+}
 
 function buildNavGroup(title, items) {
   const group = h('div.nav-group', null, h('div.nav-group-title', { text: title }));
@@ -97,22 +105,29 @@ function ensureShell() {
 
   const sidebar = h('aside.sidebar', { id: 'sidebar' },
     h('div.sidebar-brand', null,
-      h('span.brand-mark', { text: 'А' }),
-      h('span', { text: 'Арена Переговоров' })
+      h('span.brand-mark', null,
+        h('img.brand-mark-img', {
+          src: '/static/team-logo-mark.png',
+          alt: '',
+          decoding: 'async',
+          'aria-hidden': 'true',
+        })
+      ),
+      h('span', { text: t('app.brand') })
     ),
     h('nav.sidebar-nav', null,
-      buildNavGroup('Играть', NAV_PLAY),
-      store.isAdmin() ? buildNavGroup('Админ', NAV_ADMIN) : null
+      buildNavGroup(t('nav.play'), navPlay()),
+      store.isAdmin() ? buildNavGroup(t('nav.admin'), navAdmin()) : null
     ),
     h('div.sidebar-footer', null,
       h('div.user-card', null,
         avatar(u),
         h('div.user-card-meta', null,
-          h('div.user-card-name', { text: u.display_name || u.login || 'Гость' }),
-          h('div.user-card-role', { text: u.role === 'admin' ? 'Администратор' : 'Пользователь' })
+          h('div.user-card-name', { text: u.display_name || u.login || '—' }),
+          h('div.user-card-role', { text: u.role === 'admin' ? t('role.admin') : t('role.user') })
         )
       ),
-      h('button.btn.btn-ghost.btn-block', { type: 'button', onClick: logout }, 'Выйти')
+      h('button.btn.btn-ghost.btn-block', { type: 'button', onClick: logout }, t('action.logout'))
     )
   );
 
@@ -137,10 +152,11 @@ function ensureShell() {
   const menuList = h('div.user-menu-list', null,
     h('div.user-menu-head', null,
       h('strong', { text: u.display_name || u.login || '—' }),
-      h('span', { text: u.role === 'admin' ? 'Администратор' : 'Пользователь' })
+      h('span', { text: u.role === 'admin' ? t('role.admin') : t('role.user') })
     ),
-    h('a.menu-item', { href: '#/settings' }, '⚙ Настройки'),
-    h('button.menu-item.danger', { type: 'button', onClick: logout }, '⏻ Выйти')
+    h('a.menu-item', { href: '#/settings' }, t('menu.settings')),
+    h('a.menu-item', { href: '#/settings/team' }, t('menu.team')),
+    h('button.menu-item.danger', { type: 'button', onClick: logout }, t('menu.logout'))
   );
   const userMenu = h('div.user-menu', null,
     h('button.user-menu-btn', {
@@ -233,13 +249,15 @@ for (const r of ROUTES) {
     if (r.access === 'public') {
       const mode = r.pattern === '/register' ? 'register' : 'login';
       renderBare(r.page, { ...params, mode });
-      document.title = `${r.title} — Арена Переговоров`;
+      const title = t(r.titleKey);
+      document.title = `${title} — ${t('app.brand')}`;
       return;
     }
 
     const s = ensureShell();
-    s.setTitle(r.title);
-    document.title = `${r.title} — Арена Переговоров`;
+    const title = t(r.titleKey);
+    s.setTitle(title);
+    document.title = `${title} — ${t('app.brand')}`;
     clear(s.main);
     r.page.renderPage(s.main, params);
     updateActiveNav(currentPath());
@@ -252,7 +270,42 @@ setFallback(() => {
   navigate(store.isLoggedIn() ? '#/' : '#/login', { replace: true });
 });
 
+// ── Смена языка: пересобрать shell и текущую страницу ──
+window.addEventListener('locale-changed', () => {
+  destroyShell();
+  const path = currentPath();
+  const mode = path === '/register' ? 'register' : 'login';
+  const r = ROUTES.find((x) => {
+    const src = x.pattern.replace(/:\w+/g, '[^/]+');
+    return new RegExp(`^${src}/?$`).test(path);
+  });
+
+  if (r && r.access === 'public') {
+    // bare login/register — без shell
+    destroyShell();
+    const host = h('div.auth-layout');
+    clear(appRoot);
+    appRoot.append(host);
+    r.page.renderPage(host, { mode });
+    const title = t(r.titleKey);
+    document.title = `${title} — ${t('app.brand')}`;
+    return;
+  }
+
+  navigate(`#${path}`, { replace: true });
+  if (r) {
+    const s = ensureShell();
+    const title = t(r.titleKey);
+    s.setTitle(title);
+    document.title = `${title} — ${t('app.brand')}`;
+    clear(s.main);
+    r.page.renderPage(s.main, {});
+    updateActiveNav(path);
+  }
+});
+
 // ── Старт ──
+initLocale();
 store.applyLocal(); // локальные theme/font сразу
 setRoot(appRoot);
 start();

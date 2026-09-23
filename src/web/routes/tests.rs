@@ -922,7 +922,7 @@ async fn model_preference_set_get_clear_flow_for_user() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body.as_array().map(Vec::len), Some(0));
 
-    // Варианты для выбора.
+    // Варианты для выбора (включая сид demo-mock, если он назначен).
     let (status, body) = app
         .call(
             "GET",
@@ -933,8 +933,10 @@ async fn model_preference_set_get_clear_flow_for_user() {
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let options = body.as_array().expect("array");
-    assert_eq!(options.len(), 1);
-    assert_eq!(options[0]["id"], model_id);
+    assert!(
+        options.iter().any(|o| o["id"] == model_id),
+        "options должны содержать созданную модель {model_id}: {body}"
+    );
 
     // Выбор.
     let (status, body) = app
@@ -1166,6 +1168,17 @@ async fn scenario_generate_without_llm_returns_503() {
     let app = TestApp::new();
     let admin = app.admin_token().await;
 
+    // Сиды могут назначить demo-mock — снимаем назначение, чтобы проверить 503.
+    let (status, body) = app
+        .call(
+            "DELETE",
+            "/api/v1/model-assignments/llm",
+            None,
+            Some(&admin),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "unassign: {body}");
+
     let (status, body) = app
         .call(
             "POST",
@@ -1178,6 +1191,31 @@ async fn scenario_generate_without_llm_returns_503() {
     let msg = body["error"].as_str().expect("error-сообщение");
     assert!(msg.contains("не настроен"), "{msg}");
     assert!(msg.contains("llm"), "{msg}");
+}
+
+/// Генерация сценария через сид demo-mock (без внешних API-ключей).
+#[tokio::test]
+async fn scenario_generate_with_mock_llm_returns_draft() {
+    let app = TestApp::new();
+    let admin = app.admin_token().await;
+
+    // Сиды назначают demo-mock на роль llm — генерация должна работать.
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v1/scenarios/generate",
+            Some(json!({ "brief": "Переговоры о зарплате", "difficulty": "medium" })),
+            Some(&admin),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert!(body["id"].as_str().is_some(), "id сценария: {body}");
+    assert_eq!(body["ai_generated"], true, "{body}");
+    assert_eq!(body["is_active"], false, "черновик неактивен: {body}");
+    assert!(
+        body["player_goal"].as_str().is_some_and(|s| !s.is_empty()),
+        "player_goal: {body}"
+    );
 }
 
 // ── Voice: TTS / STT ──────────────────────────────────────────

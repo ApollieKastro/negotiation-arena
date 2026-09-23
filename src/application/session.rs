@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use crate::application::auth::AuthContext;
 use crate::application::provider::ProviderService;
-use crate::application::settings::{global_keys, SettingsService};
-use crate::domain::entities::scenario::Scenario;
+use crate::application::settings::{global_keys, user_keys, SettingsService};
+use crate::domain::entities::scenario::{Difficulty, Scenario};
 use crate::domain::entities::session::{
     MessageRole, Session, SessionMessage, SessionMode, SessionStatus,
 };
@@ -345,7 +345,9 @@ impl SessionService {
             .get(&session.scenario_id)?
             .ok_or_else(|| AppError::NotFound("сценарий сессии не найден".into()))?;
 
-        let report = scoring::build_report(&scenario, &session.metrics, session.turn_count);
+        let locale = self.report_locale(actor)?;
+        let report =
+            scoring::build_report(&scenario, &session.metrics, session.turn_count, &locale);
         session.status = SessionStatus::Finished;
         session.total_score = report.total_score;
         session.ending_id = Some(report.ending.id.clone());
@@ -381,11 +383,27 @@ impl SessionService {
             .scenarios
             .get(&session.scenario_id)?
             .ok_or_else(|| AppError::NotFound("сценарий сессии не найден".into()))?;
+        let locale = self.report_locale(actor)?;
         Ok(scoring::build_report(
             &scenario,
             &session.metrics,
             session.turn_count,
+            &locale,
         ))
+    }
+
+    /// Локаль отчёта из пользовательских настроек (`locale`), иначе `ru`.
+    fn report_locale(&self, actor: &AuthContext) -> AppResult<String> {
+        let locale = self
+            .settings
+            .get_user(actor, &actor.user_id, user_keys::LOCALE)
+            .unwrap_or_else(|_| "ru".to_string());
+        let locale = locale.trim().to_ascii_lowercase();
+        Ok(if locale == "en" {
+            "en".into()
+        } else {
+            "ru".into()
+        })
     }
 
     // ── Внутреннее ──
@@ -531,7 +549,12 @@ fn system_prompt(scenario: &Scenario) -> String {
         "Цель игрока (не называй её вслух, но учитывай): {}.\n",
         scenario.player_goal
     ));
-    p.push_str(&format!("BATNA игрока: {}.\n", scenario.player_batna));
+    p.push_str(&format!("BATNA игрока: {}\n", scenario.player_batna));
+    p.push_str(&format!(
+        "Сложность сценария: {} ({}).\n",
+        scenario.difficulty.title(),
+        scenario.difficulty.slug()
+    ));
 
     let personality = &scenario.partner_personality;
     let mut style_bits = Vec::new();
@@ -548,12 +571,33 @@ fn system_prompt(scenario: &Scenario) -> String {
         p.push_str(&format!("Стиль общения — {}.\n", style_bits.join(", ")));
     }
 
+    // Поведение по сложности: управляет упорством и разнообразием аргументации.
+    match scenario.difficulty {
+        Difficulty::Easy => p.push_str(
+            "\nПоведение (начальная сложность):\n\
+             - Уступай после 1–2 убедительных аргументов игрока, не капризничай.\n\
+             - Используй простые формулировки, избегай сложных условий и мелких нюансов.\n",
+        ),
+        Difficulty::Medium => p.push_str(
+            "\nПоведение (средняя сложность):\n\
+             - Уступай только после конкретных аргументов и чисел, торговись умеренно.\n\
+             - Держи позицию 2–3 реплики, предлагай взаимовыгодные варианты.\n",
+        ),
+        Difficulty::Hard => p.push_str(
+            "\nПоведение (сложная сложность):\n\
+             - Не уступай без жёстких доказательств и выгоды для себя.\n\
+             - Требуй подтверждений, используй BATNA как рычаг, торговись жёстко и долго.\n\
+             - Избегай компромиссов «для вида» — соглашайся только на реальную выгоду.\n",
+        ),
+    }
+
     p.push_str(
         "\nПравила:\n\
          - Говори как живой человек, 1–4 коротких предложения, без списков и маркеров.\n\
          - Не раскрывай явно свои тайные цели, пока игрок не выяснит их вопросами.\n\
          - Учитывай его аргументы; не уступай мгновенно без сопротивления.\n\
-         - Только текст реплики, без преамбул вроде «Собеседник:».\n",
+         - Только текст реплики, без преамбул вроде «Собеседник:».\n\
+         - Отвечай на том языке, на котором пишет игрок.\n",
     );
     p
 }
@@ -961,6 +1005,45 @@ mod tests {
         assert!(prompt.contains("недоверчивый"));
         assert!(prompt.contains("BATNA"));
         assert!(prompt.contains("1–4"));
+        assert!(prompt.contains("Сложность сценария: Начальная (easy)"));
+        assert!(prompt.contains("начальная сложность"));
+        assert!(prompt.contains("на том языке"));
+    }
+
+    #[test]
+    fn system_prompt_reflects_hard_difficulty() {
+        let mut sc = Scenario {
+            id: "x".into(),
+            title: "t".into(),
+            description: "d".into(),
+            sphere: "s".into(),
+            difficulty: Difficulty::Medium,
+            player_role: "p".into(),
+            player_company: None,
+            player_goal: "g".into(),
+            player_batna: "b".into(),
+            partner_name: "Анна".into(),
+            partner_role: "Закупщик".into(),
+            partner_company: None,
+            partner_goal: "g2".into(),
+            partner_goals: vec![],
+            partner_batna: "b2".into(),
+            partner_personality: Default::default(),
+            opening_context: "o".into(),
+            endings: vec![],
+            ai_generated: false,
+            is_active: true,
+            created_by: None,
+            created_at: "now".into(),
+            updated_at: None,
+        };
+        let medium = system_prompt(&sc);
+        assert!(medium.contains("средняя сложность"));
+        sc.difficulty = Difficulty::Hard;
+        let hard = system_prompt(&sc);
+        assert!(hard.contains("Сложность сценария: Сложная (hard)"));
+        assert!(hard.contains("сложная сложность"));
+        assert!(!hard.contains("начальная сложность"));
     }
 
     #[test]

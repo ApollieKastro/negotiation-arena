@@ -122,6 +122,22 @@
 
 ---
 
+## Задачи хакатона (агент, 2026-09-23)
+
+| # | Задача | Статус |
+|---|--------|--------|
+| 1 | Презентация | `[ ]` — на пользователя |
+| 2 | Документация | `[x]` `docs/DOCUMENTATION.md` + README/ROADMAP |
+| 3 | Ветвление диалога | `[ ]` — на пользователя |
+| 4 | Fallback без LLM (mock) | `[x]` ProviderKind::Mock + сид demo-mock-llm |
+| 5 | Сложность в runtime | `[x]` system_prompt easy/medium/hard |
+| 6 | Продуктовая концепция | `[x]` `docs/CONCEPT.md` |
+| 7 | Прогрессия XP/уровни | `[x]` progress.rs + UI home/result/leaderboard |
+| 8 | Деплой | `[ ]` — на пользователя (Docker локально готов) |
+| 9 | EN-локализация player UI | `[x]` i18n.js + shell + страницы + feedback en |
+
+---
+
 ## Журнал прогресса
 
 | Дата | Этап | Что сделано |
@@ -140,3 +156,5 @@
 | 2026-09-23 | 8 (hardening) | **Rate-limit** auth (login/register/refresh) по IP: `RateLimiter` (фикс. окно, in-memory), middleware `rate_limit_auth` + `ConnectInfo`/`XFF`, ответ **429** + `Retry-After`, env `AUTH_RATE_LIMIT_MAX`/`_WINDOW_SECS` (default 20/60, 0=off); **CORS-allowlist** `ALLOWED_ORIGINS` (пусто → Any); `AppError::TooManyRequests` → 429; unit-тесты лимитера + HTTP-тесты 429/CORS; документация обновлена; Docker image собран и прогнан (health/login/503 generate) ✅ |
 | 2026-09-23 | 8 (auth hardening) | **Lockout** неудачных входов (per-login, БД, миграция 0008): колонки `failed_login_count`/`last_failed_login_at`/`locked_until`, `UserRepository::record_login_failure`/`clear_login_failures`, env `LOGIN_LOCKOUT_MAX_FAILURES`/`_WINDOW_SECS`/`_DURATION_SECS` (default 5/900/900, 0=off) → **429**; **refresh single-use**: `jti` в JWT + таблица `used_refresh_jtis`, повторный refresh → 401, окно `JWT_REFRESH_MAX_AGE_SECONDS` (default 7 дней ≥ TTL) для протухшего access; фронт `api.js` сериализует параллельные refresh; unit/HTTP-тесты lockout+ротация; SECURITY/README/.env.example/ROADMAP обновлены |
 | 2026-09-23 | 8 (deferred stage 3–4) | Закрыты deferred из ревью: **session-транзакции** (`SessionRepository::create_with_opening` / `commit_turn` — start и turn одной транзакцией); **пагинация** истории (`GET /sessions?limit=&offset=` → `{items,total,limit,offset}` + UI-пейджер); **FK-mapping** (FK/UNIQUE → отдельные 409); **spawn_blocking** для admin `POST /users`; **LLM-quota** — дневной лимит токенов на пользователя `platform.llm_daily_token_limit` (0=off), таблица `llm_daily_usage` (миграция 0009), 429 при исчерпании в ходе диалога и генерации сценариев, учёт usage всегда. unit/HTTP-тесты; **весь deferred stage 3–4 закрыт**. Тесты зелёные, clippy `-D warnings` ✅ |
+| 2026-09-23 | хакатон 4–5–7–9–6–2 | **Mock LLM** (ProviderKind::Mock, mock.rs, сид demo-mock-llm, флаг platform.demo_llm_assigned, тест 201 generate); **сложность в system_prompt**; **прогрессия** (progress.rs, XP/level в stats/leaderboard, UI); **i18n ru/en** (i18n.js, shell+player pages, locale-changed, settings language); **feedback EN** (build_report locale из settings); **docs/CONCEPT.md + DOCUMENTATION.md**, README/ROADMAP |
+| 2026-09-23 | хакатон (ollama/team) | **Keyless OpenAI-compat** (`Provider::requires_api_key` — local base_url без ключа) + **сид Ollama** (`OLLAMA_BASE_URL`/`OLLAMA_MODEL`/`OLLAMA_SEED_ASSIGN`, env в `.env.example`, README); **страница «О команде»** `#/settings/team` (`team.js`, i18n, меню), логотипы `static/team-logo*.png` + favicon, brand-mark → `team-logo-mark` |

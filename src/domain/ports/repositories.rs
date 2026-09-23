@@ -81,6 +81,8 @@ pub struct UserSessionsAggregate {
     pub best_score: i32,
     pub avg_score: i32,
     pub last_session_at: Option<String>,
+    /// Суммарный XP: положительные total_score завершённых сессий.
+    pub xp: i64,
 }
 
 /// Строка лидерборда, построенная одним SQL-запросом (JOIN + GROUP BY).
@@ -93,6 +95,8 @@ pub struct LeaderboardRow {
     pub finished: u32,
     pub best_score: i32,
     pub avg_score: i32,
+    /// Суммарный XP (для сортировки/отображения в лидерборде).
+    pub xp: i64,
 }
 
 /// Сводка по всем сессиям платформы (один запрос).

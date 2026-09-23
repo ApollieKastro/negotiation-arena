@@ -15,6 +15,7 @@ use super::deepgram::Deepgram;
 use super::elevenlabs::ElevenLabs;
 use super::gemini::Gemini;
 use super::local::{LocalCatalog, LocalModelManager};
+use super::mock::MockChat;
 use super::openai_compat::OpenAiCompat;
 
 /// Готовые адаптеры одного провайдера; `None` — роль провайдером не поддерживается.
@@ -70,14 +71,16 @@ impl ProviderFactory {
 
     /// Строит handle. `api_key` — уже расшифрованный секрет.
     ///
-    /// Для `Local` ключ не нужен; для остальных видов отсутствие ключа — ошибка.
+    /// Ключ обязателен только когда [`Provider::requires_api_key`]:
+    /// `Local` / `Mock` и OpenAI-совместимые на локальном `base_url`
+    /// (Ollama, LM Studio) работают без ключа.
     pub fn build(&self, provider: &Provider, api_key: Option<&str>) -> AppResult<ProviderHandle> {
         let key = api_key
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_string);
 
-        if provider.kind.requires_api_key() && key.is_none() {
+        if provider.requires_api_key() && key.is_none() {
             return Err(AppError::upstream(
                 &provider.name,
                 "API-ключ не задан (расшифровка или запись провайдера повреждены)",
@@ -153,6 +156,12 @@ impl ProviderFactory {
                 let manager = LocalModelManager::new(self.models_dir.clone(), self.http.clone());
                 handle.catalog = Some(Arc::new(LocalCatalog::new(manager)));
             }
+            ProviderKind::Mock => {
+                // Офлайн-режим: ключ не нужен, chat + catalog для демо и разработки.
+                let chat = Arc::new(MockChat::new(provider.name.clone()));
+                handle.catalog = Some(Arc::new(chat.catalog()));
+                handle.chat = Some(chat);
+            }
         }
 
         Ok(handle)
@@ -176,6 +185,12 @@ mod tests {
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: None,
         }
+    }
+
+    fn provider_with_base(kind: ProviderKind, base: &str) -> Provider {
+        let mut p = provider(kind, true);
+        p.base_url = Some(base.to_string());
+        p
     }
 
     #[test]
@@ -240,12 +255,37 @@ mod tests {
     }
 
     #[test]
+    fn mock_has_chat_and_catalog_without_key() {
+        let factory = ProviderFactory::new("models").unwrap();
+        let handle = factory
+            .build(&provider(ProviderKind::Mock, true), None)
+            .unwrap();
+        assert!(handle.chat.is_some());
+        assert!(handle.catalog.is_some());
+        assert!(handle.stt.is_none());
+        assert!(handle.tts.is_none());
+    }
+
+    #[test]
     fn missing_key_for_cloud_is_error() {
         let factory = ProviderFactory::new("models").unwrap();
         let err = factory
             .build(&provider(ProviderKind::OpenAiCompatible, true), None)
             .unwrap_err();
         assert!(err.to_string().contains("API-ключ"));
+    }
+
+    #[test]
+    fn local_ollama_openai_compat_builds_without_key() {
+        let factory = ProviderFactory::new("models").unwrap();
+        let handle = factory
+            .build(
+                &provider_with_base(ProviderKind::OpenAiCompatible, "http://127.0.0.1:11434/v1"),
+                None,
+            )
+            .unwrap();
+        assert!(handle.chat.is_some());
+        assert!(handle.catalog.is_some());
     }
 
     #[test]

@@ -92,6 +92,23 @@ export function setFontSize(size) {
   if (isLoggedIn()) setSetting('font_size', size).catch(() => {});
 }
 
+/** Смена языка интерфейса + best-effort синхронизация с сервером */
+export async function setLocale(locale) {
+  const { setLocale: applyLocale } = await import('./i18n.js');
+  applyLocale(locale);
+  try { localStorage.setItem('na.locale', locale); } catch { /* ignore */ }
+  cacheSettings({ locale });
+  if (isLoggedIn()) {
+    try { await setSetting('locale', locale); } catch { /* best-effort */ }
+  }
+  window.dispatchEvent(new CustomEvent('locale-changed', { detail: { locale } }));
+}
+
+/** Текущий язык (locale из настроек или ru) */
+export function getLocale() {
+  return getSettings().locale || 'ru';
+}
+
 /** Применяет локальные настройки (вызывается до/при старте) */
 export function applyLocal() {
   applyTheme();
@@ -142,5 +159,13 @@ export async function pullServerSettings() {
   cacheSettings(map);
   if (map.theme) { try { localStorage.setItem(THEME_KEY, map.theme); } catch { /* ignore */ } applyTheme(); }
   if (map.font_size) { try { localStorage.setItem(FONT_KEY, map.font_size); } catch { /* ignore */ } applyFontSize(); }
+  if (map.locale) {
+    try { localStorage.setItem('na.locale', map.locale); } catch { /* ignore */ }
+    const { setLocale: applyLocale, getLocale: currentLocale } = await import('./i18n.js');
+    if (currentLocale() !== map.locale) {
+      applyLocale(map.locale);
+      window.dispatchEvent(new CustomEvent('locale-changed', { detail: { locale: map.locale } }));
+    }
+  }
   return map;
 }

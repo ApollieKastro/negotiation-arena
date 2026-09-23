@@ -100,7 +100,8 @@ impl ProviderService {
             }
         }
 
-        if provider.kind.requires_api_key() && provider.api_key_encrypted.is_none() {
+        // Локальный base_url (Ollama и т.п.) — ключ не обязателен; см. Provider::requires_api_key.
+        if provider.requires_api_key() && provider.api_key_encrypted.is_none() {
             return Err(AppError::BadRequest(
                 "для этого типа провайдера нужен API-ключ".into(),
             ));

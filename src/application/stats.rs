@@ -4,9 +4,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::application::auth::AuthContext;
-use crate::domain::entities::session::{Session, SessionStatus};
-use crate::domain::entities::user::User;
 use crate::domain::ports::{ScenarioRepository, SessionRepository, UserRepository};
+use crate::domain::services::progress::{progress_for_xp, Progress};
 use crate::error::{AppError, AppResult};
 use crate::infrastructure::db::repos::SqliteRepos;
 
@@ -23,6 +22,9 @@ pub struct UserStats {
     pub best_score: i32,
     pub avg_score: i32,
     pub last_session_at: Option<String>,
+    /// Прогрессия: XP, уровень, прогресс до следующего уровня.
+    #[serde(flatten)]
+    pub progress: Progress,
 }
 
 /// Строка лидерборда.
@@ -35,6 +37,8 @@ pub struct LeaderboardEntry {
     pub finished_sessions: u32,
     pub best_score: i32,
     pub avg_score: i32,
+    pub xp: i64,
+    pub level: u32,
 }
 
 /// Обзор платформы для дашборда администратора.
@@ -96,6 +100,7 @@ impl StatsService {
             best_score: agg.best_score,
             avg_score: agg.avg_score,
             last_session_at: agg.last_session_at,
+            progress: progress_for_xp(agg.xp),
         })
     }
 
@@ -118,20 +123,25 @@ impl StatsService {
             .leaderboard_rows()?
             .into_iter()
             .filter(|r| r.is_active && r.finished > 0)
-            .map(|r| LeaderboardEntry {
-                rank: 0,
-                user_id: r.user_id,
-                login: r.login,
-                display_name: r.display_name,
-                finished_sessions: r.finished,
-                best_score: r.best_score,
-                avg_score: r.avg_score,
+            .map(|r| {
+                let level = progress_for_xp(r.xp).level;
+                LeaderboardEntry {
+                    rank: 0,
+                    user_id: r.user_id,
+                    login: r.login,
+                    display_name: r.display_name,
+                    finished_sessions: r.finished,
+                    best_score: r.best_score,
+                    avg_score: r.avg_score,
+                    xp: r.xp,
+                    level,
+                }
             })
             .collect();
 
         rows.sort_by(|a, b| {
-            b.best_score
-                .cmp(&a.best_score)
+            b.xp.cmp(&a.xp)
+                .then(b.best_score.cmp(&a.best_score))
                 .then(b.avg_score.cmp(&a.avg_score))
                 .then(b.finished_sessions.cmp(&a.finished_sessions))
                 .then(a.login.cmp(&b.login))
@@ -205,51 +215,6 @@ impl StatsService {
     }
 }
 
-fn compute_user_stats(user: &User, sessions: &[Session]) -> UserStats {
-    let mut finished = 0u32;
-    let mut active = 0u32;
-    let mut abandoned = 0u32;
-    let mut best = 0i32;
-    let mut sum = 0i64;
-    let mut last: Option<String> = None;
-
-    for s in sessions {
-        match s.status {
-            SessionStatus::Finished => {
-                finished += 1;
-                best = best.max(s.total_score);
-                sum += i64::from(s.total_score);
-            }
-            SessionStatus::Active => active += 1,
-            SessionStatus::Abandoned => abandoned += 1,
-        }
-        let newer = match &last {
-            None => true,
-            Some(l) => s.created_at.as_str() > l.as_str(),
-        };
-        if newer {
-            last = Some(s.created_at.clone());
-        }
-    }
-
-    UserStats {
-        user_id: user.id.clone(),
-        login: user.login.clone(),
-        display_name: user.display_name.clone(),
-        total_sessions: sessions.len() as u32,
-        finished,
-        active,
-        abandoned,
-        best_score: best,
-        avg_score: if finished > 0 {
-            (sum / i64::from(finished)) as i32
-        } else {
-            0
-        },
-        last_session_at: last,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,7 +223,7 @@ mod tests {
     use crate::domain::entities::session::{
         MessageRole, Session, SessionMessage, SessionMetrics, SessionMode, SessionStatus,
     };
-    use crate::domain::entities::user::UserRole;
+    use crate::domain::entities::user::{User, UserRole};
 
     fn seed_user(svc: &crate::application::Services, login: &str, role: UserRole) -> User {
         svc.repos.users.create(login, "hash", role, None).unwrap()
@@ -363,6 +328,11 @@ mod tests {
         assert_eq!(stats.best_score, 80);
         assert_eq!(stats.avg_score, 60);
         assert!(stats.last_session_at.is_some());
+        // XP = 80 + 40 = 120 → уровень 2 (порог 100).
+        assert_eq!(stats.progress.xp, 120);
+        assert_eq!(stats.progress.level, 2);
+        assert_eq!(stats.progress.next_level_xp, 250);
+        assert!(stats.progress.progress_pct > 0 && stats.progress.progress_pct < 100);
     }
 
     #[test]
@@ -403,8 +373,13 @@ mod tests {
         assert_eq!(board[0].login, "high");
         assert_eq!(board[0].rank, 1);
         assert_eq!(board[0].best_score, 90);
+        // high: 90+70=160 XP → уровень 2; low: 50 XP → уровень 1.
+        assert_eq!(board[0].xp, 160);
+        assert_eq!(board[0].level, 2);
         assert_eq!(board[1].login, "low");
         assert_eq!(board[1].rank, 2);
+        assert_eq!(board[1].xp, 50);
+        assert_eq!(board[1].level, 1);
     }
 
     #[test]

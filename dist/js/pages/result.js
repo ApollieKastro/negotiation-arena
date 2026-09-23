@@ -4,12 +4,8 @@ import { h } from '../core/dom.js';
 import { emptyState, skeleton, statCard, badge } from '../core/components.js';
 import { request, ApiError } from '../core/api.js';
 import { navigate } from '../core/router.js';
+import { t, strategyLabel, spinLabel } from '../core/i18n.js';
 
-const STRATEGY_LABEL = {
-  collaboration: 'Сотрудничество',
-  compromise: 'Компромисс',
-  confrontation: 'Конфронтация',
-};
 const STRATEGY_VARIANT = {
   collaboration: 'success',
   compromise: 'warning',
@@ -75,8 +71,8 @@ export function renderPage(root, params = {}) {
     marker,
     h('div.page-header', null,
       h('div', null,
-        h('h1', { text: 'Результат' }),
-        h('div.page-sub', { text: 'Отчёт по прохождению сценария' })
+        h('h1', { text: t('result.title') }),
+        h('div.page-sub', { text: t('result.sub') })
       )
     ),
     loading
@@ -94,51 +90,54 @@ export function renderPage(root, params = {}) {
 
     const hero = h('div.card', null,
       h('div.card-body.stack', { style: { gap: 'var(--sp-3)', alignItems: 'center', textAlign: 'center' } },
-        h('div.stat-label', { text: 'Итоговый балл' }),
+        h('div.small.muted', { text: t('result.total') }),
         h('div', {
           style: { fontSize: '3rem', fontWeight: '800', lineHeight: '1', color: 'var(--accent)' },
           class: 'num',
           text: String(r.total_score),
         }),
-        h('div.card-title', { text: r.ending ? r.ending.title : 'Переговоры завершены' }),
+        h('div.card-title', { text: r.ending ? r.ending.title : t('result.endingFallback') }),
         h('div', {
           text: r.ending ? r.ending.text : '',
           style: { color: 'var(--muted)', maxWidth: '560px' },
         }),
         r.ending && r.ending.outcome
           ? badge(r.ending.outcome, 'accent', { dot: false })
+          : null,
+        (r.total_score || 0) > 0
+          ? badge(`+${Math.max(0, r.total_score)} XP`, 'success', { dot: false })
           : null
       )
     );
 
     const metrics = h('div.stat-grid.mt-4', null,
-      statCard({ label: 'Стратегия', value: r.strategy_score }),
-      statCard({ label: 'Аргументация', value: r.argument_score }),
-      statCard({ label: 'Тон', value: r.tone_score }),
-      statCard({ label: 'Бонус за техники', value: r.technique_bonus })
+      statCard({ label: t('result.strategy'), value: r.strategy_score }),
+      statCard({ label: t('result.argument'), value: r.argument_score }),
+      statCard({ label: t('result.tone'), value: r.tone_score }),
+      statCard({ label: t('result.techniqueBonus'), value: r.technique_bonus })
     );
 
     const extra = h('div.stat-grid.mt-3', null,
-      statCard({ label: 'Ходов', value: r.turn_count }),
-      statCard({ label: 'Фокус на интересах', value: r.interest_focused }),
-      statCard({ label: 'Объективные критерии', value: r.objective_criteria_used })
+      statCard({ label: t('result.turns'), value: r.turn_count }),
+      statCard({ label: t('result.interestFocus'), value: r.interest_focused }),
+      statCard({ label: t('result.objectiveCriteria'), value: r.objective_criteria_used })
     );
 
     const spinCard = h('div.card', null,
       h('div.card-body.stack', { style: { gap: 'var(--sp-3)' } },
-        h('div.card-title', { text: 'Вопросы SPIN' }),
-        progressRow('Ситуация', 'S', spin.situation || 0, spinMax),
-        progressRow('Проблема', 'P', spin.problem || 0, spinMax),
-        progressRow('Последствия', 'I', spin.implication || 0, spinMax),
-        progressRow('Ценность решения', 'N', spin.need_payoff || 0, spinMax)
+        h('div.card-title', { text: t('result.spin') }),
+        progressRow(spinLabel('S'), 'S', spin.situation || 0, spinMax),
+        progressRow(spinLabel('P'), 'P', spin.problem || 0, spinMax),
+        progressRow(spinLabel('I'), 'I', spin.implication || 0, spinMax),
+        progressRow(spinLabel('N'), 'N', spin.need_payoff || 0, spinMax)
       )
     );
 
     const stratCard = h('div.card', null,
       h('div.card-body.stack', { style: { gap: 'var(--sp-3)' } },
-        h('div.card-title', { text: 'Стратегии переговоров' }),
+        h('div.card-title', { text: t('result.strategies') }),
         ...stratCounts.map((s) => h('div.row-between', null,
-          badge(STRATEGY_LABEL[s.key], STRATEGY_VARIANT[s.key]),
+          badge(strategyLabel(s.key), STRATEGY_VARIANT[s.key]),
           h('strong.num', { text: String(s.value) })
         ))
       )
@@ -147,12 +146,12 @@ export function renderPage(root, params = {}) {
     const goalFeedback = h('div.card.mt-4', null,
       h('div.card-body.stack', { style: { gap: 'var(--sp-4)' } },
         h('div.stack', { style: { gap: 'var(--sp-2)' } },
-          h('div.card-title', { text: 'Цель' }),
+          h('div.card-title', { text: t('result.goal') }),
           h('div', { text: r.goal || '—', style: { color: 'var(--muted)' } })
         ),
         h('div.divider'),
         h('div.stack', { style: { gap: 'var(--sp-2)' } },
-          h('div.card-title', { text: 'Обратная связь' }),
+          h('div.card-title', { text: t('result.feedback') }),
           renderFeedback(r.feedback)
         )
       )
@@ -161,7 +160,7 @@ export function renderPage(root, params = {}) {
     const recs = r.recommendations && r.recommendations.length
       ? h('div.card.mt-4', null,
           h('div.card-body.stack', { style: { gap: 'var(--sp-3)' } },
-            h('div.card-title', { text: 'Рекомендации' }),
+            h('div.card-title', { text: t('result.recommendations') }),
             h('ul', { style: { margin: '0', paddingLeft: '1.2em', display: 'grid', gap: 'var(--sp-2)' } },
               ...r.recommendations.map((x) => h('li', { text: x }))
             )
@@ -173,12 +172,12 @@ export function renderPage(root, params = {}) {
       marker,
       h('div.page-header', null,
         h('div', null,
-          h('h1', { text: 'Результат' }),
-          h('div.page-sub', null, 'Отчёт по прохождению сценария')
+          h('h1', { text: t('result.title') }),
+          h('div.page-sub', null, t('result.sub'))
         ),
         h('div.page-actions', null,
-          h('a.btn.btn-primary', { href: '#/scenarios' }, 'Сыграть ещё'),
-          h('a.btn.btn-ghost', { href: '#/' }, 'На главную')
+          h('a.btn.btn-primary', { href: '#/scenarios' }, t('action.playAgain')),
+          h('a.btn.btn-ghost', { href: '#/' }, t('action.home'))
         )
       ),
       hero,
@@ -188,8 +187,8 @@ export function renderPage(root, params = {}) {
       goalFeedback,
       recs,
       h('div.row.mt-4', null,
-        h('a.btn.btn-primary', { href: '#/scenarios' }, 'Сыграть ещё'),
-        h('a.btn.btn-secondary', { href: '#/' }, 'На главную')
+        h('a.btn.btn-primary', { href: '#/scenarios' }, t('action.playAgain')),
+        h('a.btn.btn-secondary', { href: '#/' }, t('action.home'))
       )
     );
   }).catch((err) => {
@@ -198,17 +197,17 @@ export function renderPage(root, params = {}) {
       marker,
       h('div.page-header', null,
         h('div', null,
-          h('h1', { text: 'Результат' }),
-          h('div.page-sub', { text: 'Ошибка загрузки' })
+          h('h1', { text: t('result.title') }),
+          h('div.page-sub', { text: t('result.loadError') })
         )
       ),
       emptyState({
         icon: '⚠',
-        title: 'Не удалось загрузить отчёт',
-        description: err instanceof ApiError ? err.message : 'Ошибка запроса',
+        title: t('result.reportError'),
+        description: err instanceof ApiError ? err.message : t('common.error'),
         action: h('button.btn.btn-secondary', {
           type: 'button',
-          text: 'На главную',
+          text: t('action.home'),
           onClick: () => navigate('#/'),
         }),
       })

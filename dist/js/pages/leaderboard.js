@@ -3,6 +3,7 @@
 import { h } from '../core/dom.js';
 import { emptyState, skeleton, table } from '../core/components.js';
 import { request, ApiError } from '../core/api.js';
+import { t } from '../core/i18n.js';
 
 const MEDALS = ['🥇', '🥈', '🥉'];
 
@@ -25,8 +26,8 @@ export function renderPage(root, params = {}) {
     marker,
     h('div.page-header', null,
       h('div', null,
-        h('h1', { text: 'Лидерборд' }),
-        h('div.page-sub', null, 'Лучшие переговорщики по итоговому баллу')
+        h('h1', { text: t('leaderboard.title') }),
+        h('div.page-sub', null, t('leaderboard.sub'))
       )
     ),
     host
@@ -40,8 +41,8 @@ export function renderPage(root, params = {}) {
       if (!rows || !rows.length) {
         host.replaceChildren(emptyState({
           icon: '★',
-          title: 'Пока пусто',
-          description: 'Ещё нет завершённых сессий — таблица появится позже.',
+          title: t('leaderboard.empty'),
+          description: t('leaderboard.emptyDesc'),
         }));
         return;
       }
@@ -49,13 +50,13 @@ export function renderPage(root, params = {}) {
         columns: [
           {
             key: 'rank',
-            label: '#',
+            label: t('leaderboard.col.rank'),
             align: 'right',
             render: (r) => rankCell(r.rank),
           },
           {
             key: 'login',
-            label: 'Логин',
+            label: t('leaderboard.col.login'),
             render: (r) => r.display_name
               ? h('span', null,
                   h('strong', { text: r.display_name }),
@@ -64,26 +65,40 @@ export function renderPage(root, params = {}) {
           },
           {
             key: 'finished_sessions',
-            label: 'Завершено',
+            label: t('leaderboard.col.finished'),
             align: 'right',
             mono: true,
           },
           {
+            key: 'xp',
+            label: t('leaderboard.col.xp'),
+            align: 'right',
+            mono: true,
+            render: (r) => h('strong.num', { text: `${r.xp}` }),
+          },
+          {
+            key: 'level',
+            label: t('leaderboard.col.level'),
+            align: 'right',
+            mono: true,
+            render: (r) => h('span.num', { text: String(r.level) }),
+          },
+          {
             key: 'best_score',
-            label: 'Лучший балл',
+            label: t('leaderboard.col.best'),
             align: 'right',
             mono: true,
             render: (r) => h('strong.num', { text: String(r.best_score) }),
           },
           {
             key: 'avg_score',
-            label: 'Средний',
+            label: t('leaderboard.col.avg'),
             align: 'right',
             mono: true,
           },
         ],
         rows,
-        emptyText: 'Нет данных',
+        emptyText: t('common.noData'),
       }));
     })
     .catch((err) => {
@@ -91,18 +106,18 @@ export function renderPage(root, params = {}) {
       if (err instanceof ApiError && err.status === 403) {
         host.replaceChildren(emptyState({
           icon: '🔒',
-          title: 'Доступно администраторам',
-          description: 'Лидерборд показывает сводную статистику пользователей — раздел доступен только админам.',
+          title: t('leaderboard.adminOnly'),
+          description: t('leaderboard.adminOnlyDesc'),
         }));
         return;
       }
       host.replaceChildren(emptyState({
         icon: '⚠',
-        title: 'Не удалось загрузить лидерборд',
-        description: err instanceof ApiError ? err.message : 'Ошибка запроса',
+        title: t('leaderboard.loadError'),
+        description: err instanceof ApiError ? err.message : t('common.error'),
         action: h('button.btn.btn-secondary', {
           type: 'button',
-          text: 'Повторить',
+          text: t('action.retry'),
           onClick: () => { if (isCurrent()) renderPage(root, params); },
         }),
       }));

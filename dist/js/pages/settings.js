@@ -1,25 +1,10 @@
-// Настройки: внешний вид, модели, звук, профиль
+// Настройки: внешний вид, язык, модели, звук, профиль
 
 import { h } from '../core/dom.js';
 import { field, toast, spinner, emptyState } from '../core/components.js';
 import { request, ApiError } from '../core/api.js';
 import * as store from '../core/store.js';
-
-const THEME_OPTIONS = [
-  { value: 'system', label: 'Системная' },
-  { value: 'light', label: 'Светлая' },
-  { value: 'dark', label: 'Тёмная' },
-];
-const FONT_OPTIONS = [
-  { value: 'sm', label: 'Маленький (sm)' },
-  { value: 'md', label: 'Средний (md)' },
-  { value: 'lg', label: 'Большой (lg)' },
-];
-const MODEL_ROLES = [
-  { role: 'llm', label: 'Диалог (LLM)' },
-  { role: 'tts', label: 'Синтез речи (TTS)' },
-  { role: 'stt', label: 'Распознавание речи (STT)' },
-];
+import { t, getLocale, LOCALES } from '../core/i18n.js';
 
 function sectionCard(title, description, ...children) {
   return h('div.card.mt-4', null,
@@ -41,38 +26,64 @@ export function renderPage(root, params = {}) {
 
   // ── Внешний вид ──
   const themeF = field({
-    label: 'Тема оформления',
+    label: t('settings.theme'),
     type: 'select',
     value: store.getTheme(),
-    options: THEME_OPTIONS,
-    hint: '«Системная» следует за настройками ОС. Синхронизируется с аккаунтом.',
+    options: [
+      { value: 'system', label: t('settings.themeSystem') },
+      { value: 'light', label: t('settings.themeLight') },
+      { value: 'dark', label: t('settings.themeDark') },
+    ],
+    hint: t('settings.themeHint'),
   });
   themeF.control.addEventListener('change', () => {
     store.setTheme(themeF.control.value);
-    toast('Тема обновлена', 'success', 2000);
+    toast(t('settings.themeUpdated'), 'success', 2000);
     updatePreview();
   });
 
   const fontF = field({
-    label: 'Размер шрифта',
+    label: t('settings.fontSize'),
     type: 'select',
     value: store.getFontSize(),
-    options: FONT_OPTIONS,
-    hint: 'Применяется ко всему интерфейсу.',
+    options: [
+      { value: 'sm', label: t('settings.fontSm') },
+      { value: 'md', label: t('settings.fontMd') },
+      { value: 'lg', label: t('settings.fontLg') },
+    ],
+    hint: t('settings.fontSizeHint'),
   });
   fontF.control.addEventListener('change', () => {
     store.setFontSize(fontF.control.value);
-    toast('Размер шрифта обновлён', 'success', 2000);
+    toast(t('settings.fontUpdated'), 'success', 2000);
     updatePreview();
   });
 
+  // ── Язык ──
+  const langF = field({
+    label: t('settings.language'),
+    type: 'select',
+    value: getLocale(),
+    options: LOCALES.map((l) => ({ value: l.value, label: t(l.labelKey) })),
+    hint: t('settings.languageHint'),
+  });
+  langF.control.addEventListener('change', async () => {
+    const locale = langF.control.value;
+    try {
+      await store.setLocale(locale);
+      toast(t('settings.languageUpdated'), 'success', 2000);
+      // main.js слушает locale-changed и перерисует shell + страницу
+    } catch {
+      toast(t('settings.saveFail'), 'error');
+    }
+  });
+
   const preview = h('div.card', {
-    style: { background: 'var(--surface-2)', border: '1px dashed var(--border-strong)' },
-  },
+    style: { background: 'var(--surface-2)', border: '1px dashed var(--border-strong)' } },
     h('div.card-body.stack', { style: { gap: 'var(--sp-2)' } },
-      h('div.small.muted', { text: 'Превью' }),
-      h('div', { id: 'preview-text', text: 'Привет! Обсудим условия поставки и найдём решение, выгодное обеим сторонам.' }),
-      h('div.small', { id: 'preview-sub', text: 'Вторичный текст — подписи и подсказки.' })
+      h('div.small.muted', { text: t('settings.preview') }),
+      h('div', { id: 'preview-text', text: t('settings.previewText') }),
+      h('div.small', { id: 'preview-sub', text: t('settings.previewSub') })
     )
   );
   function updatePreview() {
@@ -87,7 +98,7 @@ export function renderPage(root, params = {}) {
     'aria-pressed': soundOn ? 'true' : 'false',
   });
   function renderSoundBtn() {
-    soundBtn.textContent = soundOn ? 'Включён ✓' : 'Выключен ✕';
+    soundBtn.textContent = soundOn ? t('settings.soundOn') : t('settings.soundOff');
     soundBtn.setAttribute('aria-pressed', soundOn ? 'true' : 'false');
   }
   renderSoundBtn();
@@ -98,9 +109,9 @@ export function renderPage(root, params = {}) {
       await store.setSetting('sound_enabled', next ? 'true' : 'false');
       soundOn = next;
       renderSoundBtn();
-      toast(next ? 'Звук включён' : 'Звук выключен', 'success', 2000);
+      toast(next ? t('settings.soundEnabledToast') : t('settings.soundDisabledToast'), 'success', 2000);
     } catch (err) {
-      toast(err instanceof ApiError ? err.message : 'Не удалось сохранить настройку', 'error');
+      toast(err instanceof ApiError ? err.message : t('settings.saveFail'), 'error');
     } finally {
       soundBtn.disabled = false;
     }
@@ -108,46 +119,57 @@ export function renderPage(root, params = {}) {
 
   // ── Профиль (read-only) ──
   const loginF = field({
-    label: 'Логин',
+    label: t('settings.login'),
     value: u.login || '',
     disabled: true,
-    hint: 'Изменение логина на бэке недоступно — placeholder.',
+    hint: t('settings.loginHint'),
   });
   const nameF = field({
-    label: 'Отображаемое имя',
+    label: t('settings.displayName'),
     value: u.display_name || '',
-    placeholder: 'Не задано',
+    placeholder: t('settings.displayNamePlaceholder'),
     disabled: true,
-    hint: 'Редактирование имени появится позже — API профиля пока не поддерживает.',
+    hint: t('settings.displayNameHint'),
   });
 
   // ── Модели ──
   const modelsHost = h('div.stack');
-  modelsHost.append(spinner('', { label: 'Загружаем модели…' }));
+  modelsHost.append(spinner('', { label: t('settings.modelsLoading') }));
+
+  const MODEL_ROLES = [
+    { role: 'llm', label: t('settings.modelRole.llm') },
+    { role: 'tts', label: t('settings.modelRole.tts') },
+    { role: 'stt', label: t('settings.modelRole.stt') },
+  ];
 
   root.replaceChildren(
     marker,
     h('div.page-header', null,
       h('div', null,
-        h('h1', { text: 'Настройки' }),
-        h('div.page-sub', null, 'Внешний вид, модели, звук и профиль')
+        h('h1', { text: t('settings.title') }),
+        h('div.page-sub', null, t('settings.sub'))
       )
     ),
 
-    sectionCard('Внешний вид', 'Тема и размер шрифта сохраняются в аккаунте.',
-      themeF, fontF, preview),
+    sectionCard(t('settings.appearance'), t('settings.appearanceDesc'),
+      themeF, fontF, langF, preview),
 
-    sectionCard('Модели', 'Своя модель вместо глобального назначения роли.',
+    sectionCard(t('settings.models'), t('settings.modelsDesc'),
       modelsHost),
 
-    sectionCard('Звук', 'Сигналы и эффекты интерфейса.',
+    sectionCard(t('settings.sound'), t('settings.soundDesc'),
       h('div.row-between', null,
-        h('div.small.muted', { text: 'Звуковые эффекты' }),
+        h('div.small.muted', { text: t('settings.soundEffects') }),
         soundBtn
       )),
 
-    sectionCard('Профиль', 'Данные учётной записи.',
-      loginF, nameF)
+    sectionCard(t('settings.profile'), t('settings.profileDesc'),
+      loginF, nameF),
+
+    sectionCard(t('team.title'), t('team.settingsDesc'),
+      h('div.row', null,
+        h('a.btn.btn-secondary.btn-sm', { href: '#/settings/team' }, t('team.open'))
+      ))
   );
 
   updatePreview();
@@ -166,7 +188,7 @@ export function renderPage(root, params = {}) {
 
     if (!anyOptions && !prefList.length) {
       modelsHost.replaceChildren(h('div.small.muted', {
-        text: 'Модели не назначены администратором — выбор недоступен.',
+        text: t('settings.modelsEmpty'),
       }));
       return;
     }
@@ -179,24 +201,24 @@ export function renderPage(root, params = {}) {
       if (!opts.length && !current) continue;
 
       const currentLine = h('div.small', null,
-        h('span.muted', { text: 'Текущий выбор: ' }),
+        h('span.muted', { text: t('settings.currentChoice') }),
         current
           ? h('strong', { text: current.model_display_name || current.model_id })
-          : h('span', { text: 'глобальная модель по умолчанию' })
+          : h('span', { text: t('settings.globalDefault') })
       );
 
       const resetBtn = h('button.btn.btn-ghost.btn-sm', {
         type: 'button',
-        text: 'Сбросить на глобальную',
+        text: t('settings.resetGlobal'),
         disabled: !current,
         onClick: async () => {
           resetBtn.disabled = true;
           try {
             await request(`/model-preferences/me/${role}`, { method: 'DELETE' });
-            toast('Возвращена глобальная модель', 'success');
+            toast(t('settings.globalRestored'), 'success');
             if (isCurrent()) renderPage(root, params);
           } catch (err) {
-            toast(err instanceof ApiError ? err.message : 'Не удалось сбросить', 'error');
+            toast(err instanceof ApiError ? err.message : t('settings.resetFail'), 'error');
             resetBtn.disabled = false;
           }
         },
@@ -205,16 +227,16 @@ export function renderPage(root, params = {}) {
       let selectF;
       if (opts.length) {
         selectF = field({
-          label: `Своя модель вместо глобальной — ${label}`,
+          label: t('settings.customModelLabel', { role: label }),
           type: 'select',
           value: current ? current.model_id : '',
           options: [
-            { value: '', label: 'Глобальная (по умолчанию)' },
+            { value: '', label: t('settings.globalOption') },
             ...opts.map((m) => ({ value: m.id, label: m.display_name || m.model_key })),
           ],
           hint: current
-            ? `Выбрано: ${current.model_display_name || current.model_id}`
-            : 'Используется назначение администратора.',
+            ? t('settings.assignedTo', { name: current.model_display_name || current.model_id })
+            : t('settings.useAdminAssign'),
         });
         selectF.control.addEventListener('change', async () => {
           const modelId = selectF.control.value;
@@ -222,18 +244,18 @@ export function renderPage(root, params = {}) {
           try {
             if (!modelId) {
               await request(`/model-preferences/me/${role}`, { method: 'DELETE' });
-              toast('Возвращена глобальная модель', 'success');
+              toast(t('settings.globalRestored'), 'success');
             } else {
               await request(`/model-preferences/me/${role}`, {
                 method: 'PUT',
                 body: { model_id: modelId },
               });
-              toast('Модель сохранена', 'success');
+              toast(t('settings.modelSaved'), 'success');
             }
             if (isCurrent()) renderPage(root, params);
           } catch (err) {
-            selectF.setError(err instanceof ApiError ? err.message : 'Не удалось сохранить');
-            toast(err instanceof ApiError ? err.message : 'Ошибка сохранения', 'error');
+            selectF.setError(err instanceof ApiError ? err.message : t('settings.modelSaveFail'));
+            toast(err instanceof ApiError ? err.message : t('settings.saveError'), 'error');
           }
         });
       }
@@ -243,7 +265,7 @@ export function renderPage(root, params = {}) {
           h('div.card-body.stack', { style: { gap: 'var(--sp-3)' } },
             h('div.card-title', { text: label }),
             currentLine,
-            selectF || h('div.small.muted', { text: 'Свободный выбор моделей не назначен.' }),
+            selectF || h('div.small.muted', { text: t('settings.freePick') }),
             h('div.row', null, resetBtn)
           )
         )
@@ -252,15 +274,15 @@ export function renderPage(root, params = {}) {
 
     if (!modelsHost.childNodes.length) {
       modelsHost.replaceChildren(h('div.small.muted', {
-        text: 'Модели не назначены администратором — выбор недоступен.',
+        text: t('settings.modelsEmpty'),
       }));
     }
   }).catch(() => {
     if (!isCurrent()) return;
     modelsHost.replaceChildren(emptyState({
       icon: '⚙',
-      title: 'Не удалось загрузить модели',
-      description: 'Проверьте соединение и попробуйте позже.',
+      title: t('settings.modelsError'),
+      description: t('settings.modelsErrorDesc'),
     }));
   });
 }

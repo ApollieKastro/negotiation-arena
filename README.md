@@ -77,6 +77,19 @@ docker-compose up -d
 
 Пока роль `llm` не назначена (или модель отключена/удалена), диалог и AI-генерация возвращают **503 «Диалог не настроен»**.
 
+### Локальный Ollama (без API-ключа)
+
+Для OpenAI-совместимых провайдеров с **локальным** `base_url` (`localhost`, `127.0.0.0/8`, приватные сети) API-ключ не обязателен.
+
+```bash
+# .env
+OLLAMA_BASE_URL=http://127.0.0.1:11434/v1   # сид создаст провайдера Ollama
+OLLAMA_MODEL=qwen3.5:4b                      # ollama pull qwen3.5:4b
+OLLAMA_SEED_ASSIGN=1                         # 1 — при старте назначать роль llm на Ollama
+```
+
+Либо вручную: **Провайдеры → Добавить** → тип «OpenAI-совместимый», Base URL `http://127.0.0.1:11434/v1`, ключ не нужен → **Discover** → назначить роль `llm`.
+
 ## Роли моделей и голос
 
 Модели в системе имеют роли:
@@ -116,7 +129,9 @@ negotiation-arena/
 │   └── web/                    # роуты /api/v1, middleware, хендлеры
 ├── dist/                       # SPA vanilla-JS (index.html, css, js) — без сборщика
 ├── static/                     # статические ассеты (/static)
-├── docs/ROADMAP.md             # план работ и прогресс
+├── docs/CONCEPT.md              # продуктовая концепция
+├── docs/DOCUMENTATION.md        # архитектура, симуляция, запуск, env
+├── docs/ROADMAP.md              # план работ и прогресс
 ├── .env.example                # шаблон переменных окружения
 ├── Dockerfile                  # multi-stage сборка образа
 ├── docker-compose.yml          # сервис arena + volume + healthcheck
@@ -139,5 +154,11 @@ CI (`.github/workflows/ci.yml`) гоняет `fmt` + `clippy -D warnings` + `tes
 
 ## См. также
 
+- [`docs/CONCEPT.md`](docs/CONCEPT.md) — продуктовая концепция (ЦА, ценность, границы MVP)
+- [`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md) — архитектура, логика симуляции, запуск/демо, env
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — план этапов и журнал прогресса
 - [`SECURITY.md`](SECURITY.md) — секреты, шифрование, как сообщить об уязвимости
+
+## Демо без LLM
+
+Сид создаёт встроенный **mock-провайдер** (`demo-mock` / модель `demo-mock-llm`) и один раз назначает роль `llm`, если назначения нет. Детали — [документация, §3.3](docs/DOCUMENTATION.md#33-демо-путь-без-внешней-llm).
