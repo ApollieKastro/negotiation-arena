@@ -173,8 +173,12 @@ export function renderPage(root, params = {}) {
   Promise.all([
     request('/sessions', { query: { limit: 5 } }),
     request('/scenarios').catch(() => []),
-  ]).then(([sessions, scenarios]) => {
+  ]).then(([page, scenarios]) => {
     if (!isCurrent()) return;
+    // Совместимость: `{items,...}` (новый формат) или массив (fallback).
+    const sessions = Array.isArray(page)
+      ? page
+      : Array.isArray(page?.items) ? page.items : [];
     const titleMap = new Map((scenarios || []).map((s) => [s.id, s.title]));
     if (!sessions.length) {
       recentHost.replaceChildren(emptyState({

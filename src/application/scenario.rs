@@ -4,9 +4,11 @@ use std::sync::Arc;
 
 use crate::application::auth::AuthContext;
 use crate::application::provider::ProviderService;
+use crate::application::settings::{global_keys, SettingsService};
 use crate::domain::entities::scenario::{Difficulty, Ending, Scenario};
 use crate::domain::ports::{
-    AuditRepository, ChatMessage, ChatRequest, ScenarioRepository, SessionRepository,
+    AuditRepository, ChatMessage, ChatRequest, LlmUsageRepository, ScenarioRepository,
+    SessionRepository,
 };
 use crate::error::{AppError, AppResult};
 use crate::infrastructure::db::repos::SqliteRepos;
@@ -18,11 +20,20 @@ const MAX_BRIEF_CHARS: usize = 4000;
 pub struct ScenarioService {
     repos: Arc<SqliteRepos>,
     providers: Arc<ProviderService>,
+    settings: Arc<SettingsService>,
 }
 
 impl ScenarioService {
-    pub fn new(repos: Arc<SqliteRepos>, providers: Arc<ProviderService>) -> Self {
-        Self { repos, providers }
+    pub fn new(
+        repos: Arc<SqliteRepos>,
+        providers: Arc<ProviderService>,
+        settings: Arc<SettingsService>,
+    ) -> Self {
+        Self {
+            repos,
+            providers,
+            settings,
+        }
     }
 
     // ── Чтение ──
@@ -179,6 +190,37 @@ impl ScenarioService {
 
     // ── ИИ-генератор ──
 
+    /// Дневной лимит LLM-токенов (0 = выключен).
+    fn llm_daily_token_limit(&self) -> AppResult<u64> {
+        let raw = self
+            .settings
+            .get_global(global_keys::LLM_DAILY_TOKEN_LIMIT)?;
+        Ok(raw.trim().parse::<u64>().unwrap_or(0))
+    }
+
+    /// Проверяет квоту перед вызовом LLM; при исчерпании → 429.
+    fn ensure_llm_quota(&self, user_id: &str, limit: u64) -> AppResult<()> {
+        if limit == 0 {
+            return Ok(());
+        }
+        let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let used = self.repos.llm_usage.tokens_on(user_id, &day)?;
+        if used >= limit {
+            return Err(AppError::TooManyRequests(format!(
+                "дневной лимит LLM-токенов исчерпан ({used}/{limit}); попробуйте завтра"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Начисляет факт использования (всегда, даже при лимите 0 — для учёта).
+    fn record_llm_usage(&self, user_id: &str, tokens: u64) {
+        let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        if let Err(err) = self.repos.llm_usage.add_usage(user_id, &day, tokens) {
+            tracing::warn!(error = %err, "не удалось записать LLM-квоту");
+        }
+    }
+
     /// Генерирует черновик сценария по брифу через назначенную LLM.
     ///
     /// Сценарий сохраняется как неактивный (`is_active = false`) — админ
@@ -203,6 +245,10 @@ impl ScenarioService {
             )));
         }
 
+        // Дневная квота LLM-токенов (0 = off) — та же, что в диалоге.
+        let limit = self.llm_daily_token_limit()?;
+        self.ensure_llm_quota(&actor.user_id, limit)?;
+
         let (chat, model_key) = self.providers.resolve_chat().await?;
 
         let system = ChatMessage::system(GENERATOR_SYSTEM);
@@ -218,6 +264,15 @@ impl ScenarioService {
             .with_temperature(0.6)
             .with_max_tokens(2500);
         let response = chat.chat(request).await?;
+        let tokens = response
+            .usage
+            .total_tokens
+            .map(u64::from)
+            .unwrap_or_else(|| {
+                let chars = response.content.chars().count() as u64;
+                chars.div_ceil(4).max(1)
+            });
+        self.record_llm_usage(&actor.user_id, tokens);
 
         let mut scenario = parse_scenario_json(&response.content)?;
         // id от LLM не принимаем: иначе случайный/враждебный id перезапишет

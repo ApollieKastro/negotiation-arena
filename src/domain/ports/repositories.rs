@@ -107,9 +107,24 @@ pub struct PlatformSessionsAggregate {
 
 pub trait SessionRepository: Send + Sync {
     fn create(&self, session: &Session) -> AppResult<()>;
+    /// Создаёт сессию и opening-сообщение **в одной транзакции**.
+    fn create_with_opening(&self, session: &Session, opening: &SessionMessage) -> AppResult<()>;
     fn get(&self, id: &str) -> AppResult<Option<Session>>;
-    fn list_by_user(&self, user_id: &str, limit: u32) -> AppResult<Vec<Session>>;
+    /// История сессий пользователя: `LIMIT/OFFSET` + общий счётчик.
+    fn list_by_user(
+        &self,
+        user_id: &str,
+        limit: u32,
+        offset: u32,
+    ) -> AppResult<(Vec<Session>, u64)>;
     fn update(&self, session: &Session) -> AppResult<()>;
+    /// Фиксирует ход: UPDATE сессии + 1–2 сообщения **в одной транзакции**.
+    fn commit_turn(
+        &self,
+        session: &Session,
+        player: &SessionMessage,
+        partner: Option<&SessionMessage>,
+    ) -> AppResult<()>;
     fn append_message(&self, message: &SessionMessage) -> AppResult<()>;
     fn messages(&self, session_id: &str) -> AppResult<Vec<SessionMessage>>;
 
@@ -163,6 +178,16 @@ pub trait SettingsRepository: Send + Sync {
     fn get(&self, key: &str) -> AppResult<Option<String>>;
     fn set(&self, key: &str, value: &str) -> AppResult<()>;
     fn all(&self) -> AppResult<Vec<(String, String)>>;
+}
+
+/// Дневной учёт LLM-токенов на пользователя (квота `platform.llm_daily_token_limit`).
+pub trait LlmUsageRepository: Send + Sync {
+    /// Сколько токенов израсходовано пользователем за `day` (`YYYY-MM-DD`).
+    fn tokens_on(&self, user_id: &str, day: &str) -> AppResult<u64>;
+    /// Начисляет `tokens` (и +1 call) за `day` (upsert).
+    fn add_usage(&self, user_id: &str, day: &str, tokens: u64) -> AppResult<()>;
+    /// Удаляет записи старше `before_day` (`YYYY-MM-DD`, включая границу).
+    fn purge_before(&self, before_day: &str) -> AppResult<()>;
 }
 
 pub trait AuditRepository: Send + Sync {

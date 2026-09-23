@@ -94,6 +94,22 @@ impl From<rusqlite::Error> for AppError {
     fn from(err: rusqlite::Error) -> Self {
         match &err {
             rusqlite::Error::QueryReturnedNoRows => Self::NotFound("Запись не найдена".into()),
+            // Разбираем текст ошибки: SQLite не отдаёт тип constraint отдельно
+            // от `SqliteFailure`, но message стабилен между версиями.
+            rusqlite::Error::SqliteFailure(f, Some(msg))
+                if f.code == rusqlite::ErrorCode::ConstraintViolation =>
+            {
+                let lower = msg.to_lowercase();
+                if lower.contains("foreign key") {
+                    // Связанная запись отсутствует или ещё используется
+                    // (например, удаление сценария/модели с зависимостями).
+                    Self::Conflict("Связанная запись не найдена или ещё используется".into())
+                } else if lower.contains("unique") {
+                    Self::Conflict("Запись с такими данными уже существует".into())
+                } else {
+                    Self::Conflict("Нарушение ограничения целостности".into())
+                }
+            }
             rusqlite::Error::SqliteFailure(f, _)
                 if f.code == rusqlite::ErrorCode::ConstraintViolation =>
             {

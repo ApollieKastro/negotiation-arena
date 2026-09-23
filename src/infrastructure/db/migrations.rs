@@ -55,6 +55,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "auth_lockout_and_refresh",
         sql: include_str!("migrations/0008_auth_lockout_and_refresh.sql"),
     },
+    Migration {
+        version: 9,
+        name: "llm_daily_usage",
+        sql: include_str!("migrations/0009_llm_daily_usage.sql"),
+    },
 ];
 
 /// Общее число известных миграций (для тестов).

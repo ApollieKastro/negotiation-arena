@@ -78,30 +78,88 @@ const SELECT: &str = "SELECT id, user_id, scenario_id, mode, status, total_score
     turn_count, metrics, ending_id, ending_title, feedback, created_at, finished_at \
     FROM sessions";
 
+/// Вставляет одну строку `session_messages` (используется внутри транзакций).
+fn insert_message(
+    conn: &rusqlite::Connection,
+    message: &SessionMessage,
+) -> rusqlite::Result<usize> {
+    conn.execute(
+        "INSERT INTO session_messages (id, session_id, turn_index, role, content, strategy, score_delta, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            message.id,
+            message.session_id,
+            message.turn_index as i64,
+            message.role.slug(),
+            message.content,
+            message.strategy,
+            message.score_delta,
+            message.created_at,
+        ],
+    )
+}
+
+/// Вставляет строку `sessions` (используется внутри транзакций).
+fn insert_session(conn: &rusqlite::Connection, session: &Session) -> rusqlite::Result<usize> {
+    let metrics = serde_json::to_string(&session.metrics)
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+    conn.execute(
+        "INSERT INTO sessions (id, user_id, scenario_id, mode, status, total_score,
+            turn_count, metrics, ending_id, ending_title, feedback, created_at, finished_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        params![
+            session.id,
+            session.user_id,
+            session.scenario_id,
+            session.mode.slug(),
+            session.status.slug(),
+            session.total_score,
+            session.turn_count as i64,
+            metrics,
+            session.ending_id,
+            session.ending_title,
+            session.feedback,
+            session.created_at,
+            session.finished_at,
+        ],
+    )
+}
+
+/// Обновляет строку `sessions` (используется внутри транзакций).
+fn update_session(conn: &rusqlite::Connection, session: &Session) -> rusqlite::Result<usize> {
+    let metrics = serde_json::to_string(&session.metrics)
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+    conn.execute(
+        "UPDATE sessions SET status = ?1, total_score = ?2, turn_count = ?3,
+            metrics = ?4, ending_id = ?5, ending_title = ?6, feedback = ?7, finished_at = ?8
+         WHERE id = ?9",
+        params![
+            session.status.slug(),
+            session.total_score,
+            session.turn_count as i64,
+            metrics,
+            session.ending_id,
+            session.ending_title,
+            session.feedback,
+            session.finished_at,
+            session.id,
+        ],
+    )
+}
+
 impl SessionRepository for SqliteSessionRepo {
     fn create(&self, session: &Session) -> AppResult<()> {
         let conn = self.db.conn();
-        let metrics = serde_json::to_string(&session.metrics)?;
-        conn.execute(
-            "INSERT INTO sessions (id, user_id, scenario_id, mode, status, total_score,
-                turn_count, metrics, ending_id, ending_title, feedback, created_at, finished_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-            params![
-                session.id,
-                session.user_id,
-                session.scenario_id,
-                session.mode.slug(),
-                session.status.slug(),
-                session.total_score,
-                session.turn_count as i64,
-                metrics,
-                session.ending_id,
-                session.ending_title,
-                session.feedback,
-                session.created_at,
-                session.finished_at,
-            ],
-        )?;
+        insert_session(&conn, session)?;
+        Ok(())
+    }
+
+    fn create_with_opening(&self, session: &Session, opening: &SessionMessage) -> AppResult<()> {
+        let conn = self.db.conn();
+        let tx = conn.unchecked_transaction()?;
+        insert_session(&tx, session)?;
+        insert_message(&tx, opening)?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -113,52 +171,52 @@ impl SessionRepository for SqliteSessionRepo {
             .map_err(Into::into)
     }
 
-    fn list_by_user(&self, user_id: &str, limit: u32) -> AppResult<Vec<Session>> {
+    fn list_by_user(
+        &self,
+        user_id: &str,
+        limit: u32,
+        offset: u32,
+    ) -> AppResult<(Vec<Session>, u64)> {
         let conn = self.db.conn();
-        let sql = format!("{SELECT} WHERE user_id = ?1 ORDER BY created_at DESC LIMIT ?2");
+        let total: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE user_id = ?1",
+            params![user_id],
+            |r| r.get(0),
+        )?;
+        let sql =
+            format!("{SELECT} WHERE user_id = ?1 ORDER BY created_at DESC LIMIT ?2 OFFSET ?3");
         let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(params![user_id, limit as i64], Self::map_row)?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        let rows = stmt.query_map(params![user_id, limit as i64, offset as i64], Self::map_row)?;
+        let items = rows.collect::<Result<Vec<_>, _>>()?;
+        Ok((items, total.max(0) as u64))
     }
 
     fn update(&self, session: &Session) -> AppResult<()> {
         let conn = self.db.conn();
-        let metrics = serde_json::to_string(&session.metrics)?;
-        conn.execute(
-            "UPDATE sessions SET status = ?1, total_score = ?2, turn_count = ?3,
-                metrics = ?4, ending_id = ?5, ending_title = ?6, feedback = ?7, finished_at = ?8
-             WHERE id = ?9",
-            params![
-                session.status.slug(),
-                session.total_score,
-                session.turn_count as i64,
-                metrics,
-                session.ending_id,
-                session.ending_title,
-                session.feedback,
-                session.finished_at,
-                session.id,
-            ],
-        )?;
+        update_session(&conn, session)?;
+        Ok(())
+    }
+
+    fn commit_turn(
+        &self,
+        session: &Session,
+        player: &SessionMessage,
+        partner: Option<&SessionMessage>,
+    ) -> AppResult<()> {
+        let conn = self.db.conn();
+        let tx = conn.unchecked_transaction()?;
+        update_session(&tx, session)?;
+        insert_message(&tx, player)?;
+        if let Some(p) = partner {
+            insert_message(&tx, p)?;
+        }
+        tx.commit()?;
         Ok(())
     }
 
     fn append_message(&self, message: &SessionMessage) -> AppResult<()> {
         let conn = self.db.conn();
-        conn.execute(
-            "INSERT INTO session_messages (id, session_id, turn_index, role, content, strategy, score_delta, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![
-                message.id,
-                message.session_id,
-                message.turn_index as i64,
-                message.role.slug(),
-                message.content,
-                message.strategy,
-                message.score_delta,
-                message.created_at,
-            ],
-        )?;
+        insert_message(&conn, message)?;
         Ok(())
     }
 
@@ -388,5 +446,87 @@ mod tests {
         let messages = repo.messages("s1").unwrap();
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role, MessageRole::Partner);
+    }
+
+    fn make_message(session_id: &str, turn: u32, role: MessageRole) -> SessionMessage {
+        SessionMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            session_id: session_id.to_string(),
+            turn_index: turn,
+            role,
+            content: "реплика".into(),
+            strategy: Some("collaboration".into()),
+            score_delta: 1,
+            created_at: chrono::Utc::now().to_rfc3339(),
+        }
+    }
+
+    /// Сессия + opening — одна транзакция: обе записи либо обе, либо ни одной.
+    #[test]
+    fn create_with_opening_is_atomic() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.run_migrations().unwrap();
+        let repo = SqliteSessionRepo::new(db.clone());
+        let user_id = seed_parents(&db);
+
+        let session = make_session("tx1", &user_id);
+        let opening = make_message("tx1", 0, MessageRole::Partner);
+        repo.create_with_opening(&session, &opening).unwrap();
+
+        assert!(repo.get("tx1").unwrap().is_some());
+        assert_eq!(repo.messages("tx1").unwrap().len(), 1);
+    }
+
+    /// Ход: UPDATE сессии + сообщения одной транзакцией.
+    #[test]
+    fn commit_turn_writes_session_and_messages_atomically() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.run_migrations().unwrap();
+        let repo = SqliteSessionRepo::new(db.clone());
+        let user_id = seed_parents(&db);
+
+        let mut session = make_session("tx2", &user_id);
+        repo.create(&session).unwrap();
+        let player = make_message("tx2", 1, MessageRole::Player);
+        let partner = make_message("tx2", 1, MessageRole::Partner);
+        session.turn_count = 1;
+        session.total_score = 5;
+
+        repo.commit_turn(&session, &player, Some(&partner)).unwrap();
+
+        let loaded = repo.get("tx2").unwrap().expect("session");
+        assert_eq!(loaded.turn_count, 1);
+        assert_eq!(loaded.total_score, 5);
+        assert_eq!(repo.messages("tx2").unwrap().len(), 2);
+    }
+
+    /// LIMIT/OFFSET + общий счётчик: total не зависит от окна.
+    #[test]
+    fn list_by_user_respects_offset_and_returns_total() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.run_migrations().unwrap();
+        let repo = SqliteSessionRepo::new(db.clone());
+        let user_id = seed_parents(&db);
+
+        for i in 0..5 {
+            let mut s = make_session(&format!("p{i}"), &user_id);
+            // Убываем по created_at (RFC3339-строки лексикографически):
+            // p0 = самый новый → первым в ORDER BY DESC.
+            s.created_at = format!("2026-01-0{}T00:00:00+00:00", 5 - i);
+            repo.create(&s).unwrap();
+        }
+
+        let (page1, total) = repo.list_by_user(&user_id, 2, 0).unwrap();
+        assert_eq!(total, 5);
+        assert_eq!(page1.len(), 2);
+        assert_eq!(page1[0].id, "p0"); // newest first
+
+        let (page3, total3) = repo.list_by_user(&user_id, 2, 4).unwrap();
+        assert_eq!(total3, 5);
+        assert_eq!(page3.len(), 1);
+        assert_eq!(page3[0].id, "p4");
+
+        let (empty, _) = repo.list_by_user(&user_id, 2, 99).unwrap();
+        assert!(empty.is_empty());
     }
 }

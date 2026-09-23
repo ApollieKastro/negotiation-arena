@@ -36,18 +36,26 @@ pub async fn list(State(state): State<AppState>, user: AuthUser) -> AppResult<Js
 }
 
 /// `POST /api/v1/users` — создание пользователя администратором.
+///
+/// Argon2 синхронный и дорогой: уводим в `spawn_blocking`.
 pub async fn create(
     State(state): State<AppState>,
     actor: AuthUser,
     AppJson(req): AppJson<CreateUserRequest>,
 ) -> AppResult<(StatusCode, Json<User>)> {
-    let user = state.services.auth.create_user(
-        actor.context(),
-        &req.login,
-        &req.password,
-        req.role,
-        req.display_name.as_deref(),
-    )?;
+    let auth = state.services.auth.clone();
+    let ctx = actor.context().clone();
+    let login = req.login;
+    let password = req.password;
+    let role = req.role;
+    let display_name = req.display_name;
+    let user = tokio::task::spawn_blocking(move || {
+        auth.create_user(&ctx, &login, &password, role, display_name.as_deref())
+    })
+    .await
+    .map_err(|e| {
+        crate::error::AppError::internal(format!("создание пользователя прервано: {e}"))
+    })??;
     Ok((StatusCode::CREATED, Json(user)))
 }
 

@@ -537,7 +537,10 @@ async fn session_start_and_history_flow() {
         .call("GET", "/api/v1/sessions", None, Some(&token))
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body.as_array().map(Vec::len), Some(0));
+    assert_eq!(body["total"], 0);
+    assert!(body["items"].as_array().is_some_and(|a| a.is_empty()));
+    assert_eq!(body["limit"], 50);
+    assert_eq!(body["offset"], 0);
 
     // Старт по сид-сценарию.
     let (status, body) = app
@@ -561,9 +564,23 @@ async fn session_start_and_history_flow() {
         .call("GET", "/api/v1/sessions", None, Some(&token))
         .await;
     assert_eq!(status, StatusCode::OK);
-    let list = body.as_array().expect("array");
+    assert_eq!(body["total"], 1);
+    let list = body["items"].as_array().expect("items array");
     assert_eq!(list.len(), 1);
     assert_eq!(list[0]["id"], session_id);
+
+    // Offset за пределами списка: пусто, total неизменен.
+    let (status, body) = app
+        .call(
+            "GET",
+            "/api/v1/sessions?limit=5&offset=10",
+            None,
+            Some(&token),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], 1);
+    assert!(body["items"].as_array().is_some_and(|a| a.is_empty()));
 
     // GET /sessions/:id владелец.
     let (status, _) = app

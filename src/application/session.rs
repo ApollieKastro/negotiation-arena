@@ -10,7 +10,8 @@ use crate::domain::entities::session::{
     MessageRole, Session, SessionMessage, SessionMode, SessionStatus,
 };
 use crate::domain::ports::{
-    AuditRepository, ChatMessage, ChatRequest, ScenarioRepository, SessionRepository,
+    AuditRepository, ChatMessage, ChatRequest, LlmUsageRepository, ScenarioRepository,
+    SessionRepository,
 };
 use crate::domain::services::scoring::SessionReport;
 use crate::domain::services::{analysis, scoring};
@@ -26,6 +27,12 @@ const MAX_PLAYER_TEXT_CHARS: usize = 4000;
 
 /// Верхняя граница `limit` для истории сессий.
 const MAX_HISTORY_LIMIT: u32 = 200;
+
+/// Грубая оценка токенов, когда провайдер не вернул `usage` (~4 символа на токен).
+fn estimate_tokens(text: &str) -> u64 {
+    let chars = text.chars().count() as u64;
+    chars.div_ceil(4).max(1)
+}
 
 /// Итог одного хода игрока.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -94,9 +101,16 @@ impl SessionService {
         self.repos.sessions.messages(session_id)
     }
 
-    pub fn history(&self, actor: &AuthContext, limit: u32) -> AppResult<Vec<Session>> {
+    pub fn history(
+        &self,
+        actor: &AuthContext,
+        limit: u32,
+        offset: u32,
+    ) -> AppResult<(Vec<Session>, u64)> {
         let limit = limit.clamp(1, MAX_HISTORY_LIMIT);
-        self.repos.sessions.list_by_user(&actor.user_id, limit)
+        self.repos
+            .sessions
+            .list_by_user(&actor.user_id, limit, offset)
     }
 
     // ── Старт ──
@@ -132,7 +146,6 @@ impl SessionService {
             created_at: now.clone(),
             finished_at: None,
         };
-        self.repos.sessions.create(&session)?;
 
         let opening = scenario.opening_context.clone();
         let partner_msg = SessionMessage {
@@ -145,7 +158,11 @@ impl SessionService {
             score_delta: 0,
             created_at: now,
         };
-        self.repos.sessions.append_message(&partner_msg)?;
+        // Сессия + opening — одной транзакцией: иначе при сбое второй записи
+        // в истории останется сессия без первого сообщения.
+        self.repos
+            .sessions
+            .create_with_opening(&session, &partner_msg)?;
         self.audit(actor, "session.start", &session.id);
 
         Ok(SessionStarted {
@@ -234,9 +251,11 @@ impl SessionService {
             created_at: now,
         };
 
-        self.repos.sessions.append_message(&player_msg)?;
-        self.repos.sessions.append_message(&partner_msg)?;
-        self.repos.sessions.update(&session)?;
+        // Счёт + 2 реплики + UPDATE сессии — одна транзакция:
+        // иначе при сбое середины ход «повисит» (счёт без сообщений или наоборот).
+        self.repos
+            .sessions
+            .commit_turn(&session, &player_msg, Some(&partner_msg))?;
 
         Ok(TurnOutcome {
             session,
@@ -295,8 +314,7 @@ impl SessionService {
             score_delta,
             created_at: chrono::Utc::now().to_rfc3339(),
         };
-        self.repos.sessions.append_message(&msg)?;
-        self.repos.sessions.update(&session)?;
+        self.repos.sessions.commit_turn(&session, &msg, None)?;
 
         Ok(TurnOutcome {
             session,
@@ -372,6 +390,37 @@ impl SessionService {
 
     // ── Внутреннее ──
 
+    /// Дневной лимит LLM-токенов (0 = выключен).
+    fn llm_daily_token_limit(&self) -> AppResult<u64> {
+        let raw = self
+            .settings
+            .get_global(global_keys::LLM_DAILY_TOKEN_LIMIT)?;
+        Ok(raw.trim().parse::<u64>().unwrap_or(0))
+    }
+
+    /// Проверяет квоту перед вызовом LLM; при исчерпании → 429.
+    fn ensure_llm_quota(&self, user_id: &str, limit: u64) -> AppResult<()> {
+        if limit == 0 {
+            return Ok(());
+        }
+        let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let used = self.repos.llm_usage.tokens_on(user_id, &day)?;
+        if used >= limit {
+            return Err(AppError::TooManyRequests(format!(
+                "дневной лимит LLM-токенов исчерпан ({used}/{limit}); попробуйте завтра"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Начисляет факт использования (всегда, даже при лимите 0 — для учёта).
+    fn record_llm_usage(&self, user_id: &str, tokens: u64) {
+        let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        if let Err(err) = self.repos.llm_usage.add_usage(user_id, &day, tokens) {
+            tracing::warn!(error = %err, "не удалось записать LLM-квоту");
+        }
+    }
+
     async fn partner_reply(
         &self,
         scenario: &Scenario,
@@ -379,6 +428,9 @@ impl SessionService {
         player_text: &str,
         user_id: &str,
     ) -> AppResult<String> {
+        let limit = self.llm_daily_token_limit()?;
+        self.ensure_llm_quota(user_id, limit)?;
+
         let (chat, model_key) = self.providers.resolve_chat_for(user_id).await?;
 
         let mut messages = Vec::with_capacity(history.len() + 2);
@@ -395,6 +447,14 @@ impl SessionService {
             .with_temperature(0.7)
             .with_max_tokens(400);
         let response = chat.chat(request).await?;
+        // Провайдер может не вернуть usage — оцениваем ответ по длине (~4 chars/token).
+        let tokens = response
+            .usage
+            .total_tokens
+            .map(u64::from)
+            .unwrap_or_else(|| estimate_tokens(&response.content));
+        self.record_llm_usage(user_id, tokens);
+
         let content = response.content.trim().to_string();
         if content.is_empty() {
             return Err(AppError::upstream(
@@ -797,6 +857,70 @@ mod tests {
             .sessions
             .record_player_turn(&user, &started.session.id, "   ")
             .is_err());
+    }
+
+    // ── LLM-квота ──
+
+    #[test]
+    fn llm_quota_zero_means_disabled_and_records_usage() {
+        let (_db, svc) = setup().unwrap();
+        let user = user_ctx(&svc);
+        let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
+
+        // limit=0 → квота выключена.
+        assert_eq!(
+            svc.sessions.llm_daily_token_limit().unwrap(),
+            0,
+            "default platform.llm_daily_token_limit = 0"
+        );
+        svc.sessions.ensure_llm_quota(&user.user_id, 0).unwrap();
+
+        // Учёт токенов идёт даже при выключенном лимите.
+        svc.sessions.record_llm_usage(&user.user_id, 42);
+        assert_eq!(
+            svc.repos.llm_usage.tokens_on(&user.user_id, &day).unwrap(),
+            42
+        );
+        svc.sessions.record_llm_usage(&user.user_id, 8);
+        assert_eq!(
+            svc.repos.llm_usage.tokens_on(&user.user_id, &day).unwrap(),
+            50
+        );
+    }
+
+    #[test]
+    fn llm_quota_exhausted_returns_429() {
+        let (_db, svc) = setup().unwrap();
+        let user = user_ctx(&svc);
+        let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
+
+        // Ровно лимит → блок.
+        svc.repos
+            .llm_usage
+            .add_usage(&user.user_id, &day, 100)
+            .unwrap();
+        let err = svc
+            .sessions
+            .ensure_llm_quota(&user.user_id, 100)
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::TooManyRequests(_)),
+            "ожидали 429, получили: {err}"
+        );
+
+        // Лимит выше израсходованного → можно.
+        svc.sessions.ensure_llm_quota(&user.user_id, 101).unwrap();
+        // Ноль — квота выключена, всегда можно.
+        svc.sessions.ensure_llm_quota(&user.user_id, 0).unwrap();
+    }
+
+    #[test]
+    fn estimate_tokens_uses_about_four_chars_per_token() {
+        assert_eq!(estimate_tokens(""), 1);
+        assert_eq!(estimate_tokens("аб"), 1);
+        assert_eq!(estimate_tokens("абвг"), 1);
+        assert_eq!(estimate_tokens("абвгд"), 2);
+        assert_eq!(estimate_tokens(&"x".repeat(40)), 10);
     }
 
     #[test]

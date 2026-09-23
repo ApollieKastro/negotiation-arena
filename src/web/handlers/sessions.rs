@@ -14,10 +14,16 @@ fn default_history_limit() -> u32 {
     50
 }
 
+fn default_history_offset() -> u32 {
+    0
+}
+
 #[derive(Debug, Deserialize)]
 pub struct HistoryQuery {
     #[serde(default = "default_history_limit")]
     pub limit: u32,
+    #[serde(default = "default_history_offset")]
+    pub offset: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -32,14 +38,24 @@ pub struct TurnRequest {
     pub text: String,
 }
 
-/// `GET /api/v1/sessions` — история сессий текущего пользователя.
+/// `GET /api/v1/sessions?limit=&offset=` — история сессий текущего пользователя.
+///
+/// Ответ: `{ items, total, limit, offset }` — offset-пагинация.
 pub async fn history(
     State(state): State<AppState>,
     user: AuthUser,
     AppQuery(q): AppQuery<HistoryQuery>,
-) -> AppResult<Json<Vec<Session>>> {
-    let sessions = state.services.sessions.history(user.context(), q.limit)?;
-    Ok(Json(sessions))
+) -> AppResult<Json<serde_json::Value>> {
+    let (items, total) = state
+        .services
+        .sessions
+        .history(user.context(), q.limit, q.offset)?;
+    Ok(Json(serde_json::json!({
+        "items": items,
+        "total": total,
+        "limit": q.limit,
+        "offset": q.offset,
+    })))
 }
 
 /// `POST /api/v1/sessions` — старт сессии по сценарию.

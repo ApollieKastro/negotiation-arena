@@ -29,12 +29,17 @@
 - **CORS-allowlist**: `ALLOWED_ORIGINS` (список `https://…`); пусто — `Any` только для dev. В проде всегда задавайте allowlist.
 - **Lockout** неудачных входов (per-login, в БД — переживает рестарт): после `LOGIN_LOCKOUT_MAX_FAILURES` (default 5, `0` — off) неудач в окне `LOGIN_LOCKOUT_WINDOW_SECS` учётка блокируется на `LOGIN_LOCKOUT_DURATION_SECS` → **429**; успешный вход сбрасывает счётчик. Дополняет rate-limit по IP: защита от перебора конкретного пароля.
 - **Ротация refresh (single-use)**: в JWT есть `jti`; повторный `POST /auth/refresh` с тем же токеном → **401** (reuse = кража/гонка). Окно refresh после exp access-токена — `JWT_REFRESH_MAX_AGE_SECONDS` (default 7 дней, ≥ `JWT_TTL_SECONDS`). Фронтенд сериализует параллельные refresh в одну Promise.
+- **LLM-quota (дневной лимит токенов)**: настройка `platform.llm_daily_token_limit` (default `0` = off) — потолок токенов LLM **на пользователя за сутки (UTC)**; учёт в таблице `llm_daily_usage` (миграция 0009); при исчерпании — **429**. Применяется к ходу диалога и генерации сценариев; usage фиксируется всегда (и при лимите 0).
+- **Пагинация** истории: `GET /sessions?limit=&offset=` → `{items,total,limit,offset}` (защита от выгрузки всей истории одним запросом).
+- **Session-транзакции**: старт (сессия+opening) и ход (UPDATE+сообщения) — одной SQLite-транзакцией, без «повисших» частей.
+- **FK-mapping**: нарушения `FOREIGN KEY`/`UNIQUE` → отдельные сообщения 409 (без сырых SQL-ошибок клиенту).
 
 ## Отложено (deferred)
 
-Следующие меры зафиксированы в `docs/ROADMAP.md` (этап 8, Hardening) и в MVP ещё **не реализованы**:
+Следующие меры зафиксированы в `docs/ROADMAP.md` (этап 8, Hardening):
 
-- пагинация, session-транзакции, LLM-quota.
+- CSRF — *не нужен при Bearer*;
+- покрытие/фаззинг.
 
 ## Как сообщить об уязвимости
 

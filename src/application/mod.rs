@@ -70,8 +70,12 @@ impl Services {
             &config.security,
             &config.lockout,
         ));
-        let scenarios = Arc::new(ScenarioService::new(repos.clone(), providers.clone()));
         let settings = Arc::new(SettingsService::new(repos.clone()));
+        let scenarios = Arc::new(ScenarioService::new(
+            repos.clone(),
+            providers.clone(),
+            settings.clone(),
+        ));
         let sessions = Arc::new(SessionService::new(
             repos.clone(),
             providers.clone(),

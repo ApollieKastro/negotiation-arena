@@ -41,6 +41,10 @@ const KNOWN_KEYS = {
     hint: 'Максимум ходов в сессии (число).',
     control: 'number',
   },
+  'platform.llm_daily_token_limit': {
+    hint: 'Дневной лимит LLM-токенов на пользователя; 0 = лимит выключен, при исчерпании — 429.',
+    control: 'number',
+  },
 };
 
 function formModal({ title, body, submitLabel = 'Сохранить', onSubmit }) {
@@ -202,7 +206,7 @@ export function renderPage(root, params = {}) {
     if (key === null) {
       keyF = field({
         label: 'Ключ', required: true, placeholder: 'platform.site_name',
-        hint: 'Известные: platform.site_name, platform.default_theme, platform.default_font_size, platform.default_locale, platform.max_turns',
+        hint: 'Известные: platform.site_name, platform.default_theme, platform.default_font_size, platform.default_locale, platform.max_turns, platform.llm_daily_token_limit',
       });
       ctrl = buildControl('', '');
     } else {

@@ -19,6 +19,8 @@ pub mod global_keys {
     pub const DEFAULT_LOCALE: &str = "platform.default_locale";
     /// Максимум ходов в сессии (строка с числом).
     pub const MAX_TURNS: &str = "platform.max_turns";
+    /// Дневной лимит LLM-токенов на пользователя (0 = лимит выключен).
+    pub const LLM_DAILY_TOKEN_LIMIT: &str = "platform.llm_daily_token_limit";
 }
 
 /// Ключи пользовательских настроек UI (хранятся с префиксом `user:{id}:`).
@@ -35,6 +37,7 @@ const DEFAULTS: &[(&str, &str)] = &[
     (global_keys::DEFAULT_FONT_SIZE, "md"),
     (global_keys::DEFAULT_LOCALE, "ru"),
     (global_keys::MAX_TURNS, "40"),
+    (global_keys::LLM_DAILY_TOKEN_LIMIT, "0"),
 ];
 
 /// Доступ к настройкам.

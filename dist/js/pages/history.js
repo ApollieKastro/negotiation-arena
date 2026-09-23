@@ -20,12 +20,31 @@ function statusBadge(status) {
 
 export function renderPage(root, params = {}) {
   let sessions = [];
+  let total = 0;
+  let offset = 0;
+  const LIMIT = 50;
   let titleMap = new Map();
   let statusFilter = '';
   const marker = h('span', { style: { display: 'none' }, 'data-page': 'history' });
   const isCurrent = () => marker.isConnected;
 
   const host = h('div');
+  const pager = h('div.flex.items-center.justify-between.gap-2.mt-4');
+  const prevBtn = h('button.btn.btn-secondary.btn-sm', { type: 'button', text: '← Назад' });
+  const nextBtn = h('button.btn.btn-secondary.btn-sm', { type: 'button', text: 'Вперёд →' });
+  const pagerInfo = h('span.text-sm.muted');
+  prevBtn.addEventListener('click', () => {
+    offset = Math.max(0, offset - LIMIT);
+    loadPage();
+  });
+  nextBtn.addEventListener('click', () => {
+    if (offset + LIMIT < total) {
+      offset += LIMIT;
+      loadPage();
+    }
+  });
+  pager.append(prevBtn, pagerInfo, nextBtn);
+  pager.style.display = 'none';
 
   const filterRow = h('div.tabs.tabs-pill.mt-3.mb-4', { role: 'tablist' });
   const filterBtns = FILTERS.map((f) => {
@@ -108,39 +127,68 @@ export function renderPage(root, params = {}) {
     }));
   }
 
+  function updatePager() {
+    const hasMore = offset + LIMIT < total;
+    pager.style.display = total > 0 ? 'flex' : 'none';
+    prevBtn.disabled = offset === 0;
+    nextBtn.disabled = !hasMore;
+    if (total === 0) {
+      pagerInfo.textContent = '';
+      return;
+    }
+    const from = offset + 1;
+    const to = Math.min(offset + sessions.length, total);
+    pagerInfo.textContent = `${from}–${to} из ${total}`;
+  }
+
+  function loadPage() {
+    if (!isCurrent()) return;
+    host.replaceChildren(skeleton(5, 36));
+    updatePager();
+    Promise.all([
+      request('/sessions', { query: { limit: LIMIT, offset } }),
+      request('/scenarios').catch(() => []),
+    ]).then(([page, scenarios]) => {
+      if (!isCurrent()) return;
+      // Совместимость: `{items,total,...}` (новый формат) или массив.
+      if (Array.isArray(page)) {
+        sessions = page;
+        total = page.length;
+        offset = 0;
+      } else {
+        sessions = Array.isArray(page?.items) ? page.items : [];
+        total = Number(page?.total ?? sessions.length) || 0;
+      }
+      titleMap = new Map((scenarios || []).map((s) => [s.id, s.title]));
+      updatePager();
+      renderTable();
+    }).catch((err) => {
+      if (!isCurrent()) return;
+      host.replaceChildren(emptyState({
+        icon: '⚠',
+        title: 'Не удалось загрузить историю',
+        description: err instanceof ApiError ? err.message : 'Ошибка запроса',
+        action: h('button.btn.btn-secondary', {
+          type: 'button',
+          text: 'Повторить',
+          onClick: () => { if (isCurrent()) loadPage(); },
+        }),
+      }));
+    });
+  }
+
   root.replaceChildren(
     marker,
     h('div.page-header', null,
       h('div', null,
         h('h1', { text: 'История' }),
-        h('div.page-sub', null, 'Все ваши сессии — нажмите строку, чтобы открыть')
+        h('div.page-sub', null, 'Ваши сессии — нажмите строку, чтобы открыть')
       )
     ),
     filterRow,
-    host
+    host,
+    pager
   );
 
-  host.append(skeleton(5, 36));
-
-  Promise.all([
-    request('/sessions', { query: { limit: 50 } }),
-    request('/scenarios').catch(() => []),
-  ]).then(([list, scenarios]) => {
-    if (!isCurrent()) return;
-    sessions = Array.isArray(list) ? list : [];
-    titleMap = new Map((scenarios || []).map((s) => [s.id, s.title]));
-    renderTable();
-  }).catch((err) => {
-    if (!isCurrent()) return;
-    host.replaceChildren(emptyState({
-      icon: '⚠',
-      title: 'Не удалось загрузить историю',
-      description: err instanceof ApiError ? err.message : 'Ошибка запроса',
-      action: h('button.btn.btn-secondary', {
-        type: 'button',
-        text: 'Повторить',
-        onClick: () => { if (isCurrent()) renderPage(root, params); },
-      }),
-    }));
-  });
+  loadPage();
 }

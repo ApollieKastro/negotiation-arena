@@ -1,11 +1,11 @@
-//! Репозитории настроек и аудита (SQLite).
+//! Репозитории настроек, аудита и LLM-квоты (SQLite).
 
 use std::sync::Arc;
 
 use rusqlite::{params, OptionalExtension};
 
 use crate::domain::entities::audit::AuditEntry;
-use crate::domain::ports::{AuditRepository, SettingsRepository};
+use crate::domain::ports::{AuditRepository, LlmUsageRepository, SettingsRepository};
 use crate::error::AppResult;
 use crate::infrastructure::db::Database;
 
@@ -130,5 +130,54 @@ impl AuditRepository for SqliteAuditRepo {
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+}
+
+pub struct SqliteLlmUsageRepo {
+    db: Arc<Database>,
+}
+
+impl SqliteLlmUsageRepo {
+    pub fn new(db: Arc<Database>) -> Self {
+        Self { db }
+    }
+}
+
+impl LlmUsageRepository for SqliteLlmUsageRepo {
+    fn tokens_on(&self, user_id: &str, day: &str) -> AppResult<u64> {
+        let conn = self.db.conn();
+        let tokens: i64 = conn
+            .query_row(
+                "SELECT COALESCE(tokens, 0) FROM llm_daily_usage
+                 WHERE user_id = ?1 AND day = ?2",
+                params![user_id, day],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(0);
+        Ok(tokens.max(0) as u64)
+    }
+
+    fn add_usage(&self, user_id: &str, day: &str, tokens: u64) -> AppResult<()> {
+        let conn = self.db.conn();
+        conn.execute(
+            "INSERT INTO llm_daily_usage (user_id, day, tokens, calls, updated_at)
+             VALUES (?1, ?2, ?3, 1, ?4)
+             ON CONFLICT(user_id, day) DO UPDATE SET
+                tokens = tokens + excluded.tokens,
+                calls = calls + 1,
+                updated_at = excluded.updated_at",
+            params![user_id, day, tokens as i64, chrono::Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    fn purge_before(&self, before_day: &str) -> AppResult<()> {
+        let conn = self.db.conn();
+        conn.execute(
+            "DELETE FROM llm_daily_usage WHERE day < ?1",
+            params![before_day],
+        )?;
+        Ok(())
     }
 }
