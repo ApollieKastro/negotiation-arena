@@ -50,6 +50,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "unify_max_turns",
         sql: include_str!("migrations/0007_unify_max_turns.sql"),
     },
+    Migration {
+        version: 8,
+        name: "auth_lockout_and_refresh",
+        sql: include_str!("migrations/0008_auth_lockout_and_refresh.sql"),
+    },
 ];
 
 /// Общее число известных миграций (для тестов).

@@ -108,11 +108,12 @@
 - [x] Legacy-БД сохранена как `negotiation_arena.legacy-backup.db`; чистый DB для смоука
 - [x] Rate-limit auth (login/register/refresh) по IP → 429 + `Retry-After` (`AUTH_RATE_LIMIT_*`)
 - [x] CORS-allowlist через `ALLOWED_ORIGINS` (пусто = Any только для dev)
-- [ ] Ротация refresh-токенов, lockout по неудачным логинам — *deferred*
+- [x] Lockout неудачных входов (per-login, БД, миграция 0008) → 429 (`LOGIN_LOCKOUT_*`)
+- [x] Ротация refresh single-use (`jti` + `used_refresh_jtis`, окно `JWT_REFRESH_MAX_AGE_SECONDS`)
 - [ ] Безопасность (CSRF — *не нужен при Bearer*, квоты) — *deferred*
 - [ ] Покрытие/фаззинг — *deferred*
 
-**Отложено из ревью stage 3–4 (см. журнал):** refresh-ротация, lockout, пагинация, session-транзакции, LLM-quota, FK-mapping, spawn_blocking для прочих sync-вызовов. ~~rate-limit, CORS-allowlist~~ — закрыто 2026-09-23.
+**Отложено из ревью stage 3–4 (см. журнал):** пагинация, session-транзакции, LLM-quota, FK-mapping, spawn_blocking для прочих sync-вызовов. ~~rate-limit, CORS-allowlist, refresh-ротация, lockout~~ — закрыто 2026-09-23.
 
 ---
 
@@ -132,3 +133,4 @@
 | 2026-09-23 | 7 | Этап «Голос»: `VoiceService` (src/application/voice.rs), `resolve_stt_for`/`resolve_tts_for`, `AppError::ServiceUnavailable` → 503, `AppMultipart`, хендлеры `POST /api/v1/voice/tts` (binary) и `/voice/stt` (multipart → `{text}`), `DefaultBodyLimit::max(14 МБ)`, тесты → 160, fmt/clippy зелёные |
 | 2026-09-23 | 8 (MVP) | Фиксы: (1) LLM без назначения/отключённая → **503 «Диалог не настроен»** вместо 500 (unconfigured + DIALOG_UNCONFIGURED, build_for/chat-adapter → 503); (2) **`DELETE /api/v1/model-assignments/:role`** — порт `clear_role_assignment` → репо → `ProviderService::clear_role_assignment` (ManageProviders + audit `role.clear`) → хендлер `unassign_role` → роут delete; UI-кнопка «Снять назначение» в assignmentCard; unit-тесты resolve_chat/clear + HTTP-тесты `model_assignment_unassign_flow`, `scenario_generate_without_llm_returns_503`; **165 тестов зелёные**, clippy `-D warnings` ✅, JS `node --check` ✅ |
 | 2026-09-23 | 8 (hardening) | **Rate-limit** auth (login/register/refresh) по IP: `RateLimiter` (фикс. окно, in-memory), middleware `rate_limit_auth` + `ConnectInfo`/`XFF`, ответ **429** + `Retry-After`, env `AUTH_RATE_LIMIT_MAX`/`_WINDOW_SECS` (default 20/60, 0=off); **CORS-allowlist** `ALLOWED_ORIGINS` (пусто → Any); `AppError::TooManyRequests` → 429; unit-тесты лимитера + HTTP-тесты 429/CORS; документация обновлена; Docker image собран и прогнан (health/login/503 generate) ✅ |
+| 2026-09-23 | 8 (auth hardening) | **Lockout** неудачных входов (per-login, БД, миграция 0008): колонки `failed_login_count`/`last_failed_login_at`/`locked_until`, `UserRepository::record_login_failure`/`clear_login_failures`, env `LOGIN_LOCKOUT_MAX_FAILURES`/`_WINDOW_SECS`/`_DURATION_SECS` (default 5/900/900, 0=off) → **429**; **refresh single-use**: `jti` в JWT + таблица `used_refresh_jtis`, повторный refresh → 401, окно `JWT_REFRESH_MAX_AGE_SECONDS` (default 7 дней ≥ TTL) для протухшего access; фронт `api.js` сериализует параллельные refresh; unit/HTTP-тесты lockout+ротация; SECURITY/README/.env.example/ROADMAP обновлены |

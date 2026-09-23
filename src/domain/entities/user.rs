@@ -45,13 +45,27 @@ pub struct User {
     pub created_at: String,
 }
 
-/// Пользователь вместе с хешем пароля.
+/// Пользователь вместе с хешем пароля и состоянием lockout.
 ///
 /// Возвращается только при аутентификации; хеш не сериализуется.
 #[derive(Debug, Clone)]
 pub struct UserWithSecret {
     pub user: User,
     pub password_hash: String,
+    /// Число неудачных входов в текущем окне.
+    pub failed_login_count: i64,
+    /// RFC3339: последняя неудачная попытка (окно накопления).
+    pub last_failed_login_at: Option<String>,
+    /// RFC3339: учётка заблокирована до этого момента (`None` — не заблокирована).
+    pub locked_until: Option<String>,
+}
+
+/// Состояние lockout после фиксации неудачной попытки.
+#[derive(Debug, Clone, Default)]
+pub struct LoginAttemptUpdate {
+    pub failed_login_count: i64,
+    pub last_failed_login_at: String,
+    pub locked_until: Option<String>,
 }
 
 /// Определение роли и её прав.

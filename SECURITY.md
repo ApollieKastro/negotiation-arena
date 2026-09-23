@@ -27,13 +27,13 @@
 - Ошибки upstream-провайдеров не раскрывают тела ответов клиенту (`src/error.rs` → «Внешний сервис недоступен»).
 - **Rate-limit** на `POST /auth/{login,register,refresh}`: по IP (X-Forwarded-For → ConnectInfo), ответ **429** + `Retry-After`; настройка `AUTH_RATE_LIMIT_MAX` / `AUTH_RATE_LIMIT_WINDOW_SECS` (`0` — off). Счётчики in-memory (сбрасываются при рестарте).
 - **CORS-allowlist**: `ALLOWED_ORIGINS` (список `https://…`); пусто — `Any` только для dev. В проде всегда задавайте allowlist.
+- **Lockout** неудачных входов (per-login, в БД — переживает рестарт): после `LOGIN_LOCKOUT_MAX_FAILURES` (default 5, `0` — off) неудач в окне `LOGIN_LOCKOUT_WINDOW_SECS` учётка блокируется на `LOGIN_LOCKOUT_DURATION_SECS` → **429**; успешный вход сбрасывает счётчик. Дополняет rate-limit по IP: защита от перебора конкретного пароля.
+- **Ротация refresh (single-use)**: в JWT есть `jti`; повторный `POST /auth/refresh` с тем же токеном → **401** (reuse = кража/гонка). Окно refresh после exp access-токена — `JWT_REFRESH_MAX_AGE_SECONDS` (default 7 дней, ≥ `JWT_TTL_SECONDS`). Фронтенд сериализует параллельные refresh в одну Promise.
 
 ## Отложено (deferred)
 
 Следующие меры зафиксированы в `docs/ROADMAP.md` (этап 8, Hardening) и в MVP ещё **не реализованы**:
 
-- ротация refresh-токенов (single-use);
-- lockout по неудачным логинам (сейчас только rate-limit по IP);
 - пагинация, session-транзакции, LLM-quota.
 
 ## Как сообщить об уязвимости

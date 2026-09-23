@@ -14,6 +14,7 @@ pub struct AppConfig {
     pub security: SecurityConfig,
     pub storage: StorageConfig,
     pub rate_limit: RateLimitConfig,
+    pub lockout: LockoutConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -36,6 +37,9 @@ pub struct SecurityConfig {
     /// Разрешённые CORS-origin (например `https://app.example.com`).
     /// Пусто — `Any` (удобно в dev; в проде задайте allowlist через `ALLOWED_ORIGINS`).
     pub allowed_origins: Vec<String>,
+    /// Окно, в течение которого ещё можно продлить сессию через refresh
+    /// после exp access-токена (от `iat`). Обычно ≥ `jwt_ttl_seconds`.
+    pub jwt_refresh_max_age_secs: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -52,6 +56,17 @@ pub struct RateLimitConfig {
     pub auth_max: u32,
     /// Длина окна, секунды.
     pub auth_window_secs: u64,
+}
+
+/// Lockout учётной записи после серии неудачных входов (per-login, БД).
+#[derive(Debug, Clone)]
+pub struct LockoutConfig {
+    /// Неудачных попыток до блокировки. `0` — отключено (удобно в тестах).
+    pub max_failures: u32,
+    /// Окно накопления неудач, секунды (счётчик сбрасывается после паузы).
+    pub window_secs: u64,
+    /// Длительность блокировки после превышения лимита, секунды.
+    pub lockout_secs: u64,
 }
 
 impl AppConfig {
@@ -72,6 +87,7 @@ impl AppConfig {
                     &env_or("JWT_SECRET", "dev-only-jwt-secret-change-me-in-production"),
                 ),
                 allowed_origins: env_list("ALLOWED_ORIGINS"),
+                jwt_refresh_max_age_secs: env_parse("JWT_REFRESH_MAX_AGE_SECONDS", 604_800)?,
             },
             storage: StorageConfig {
                 db_path: PathBuf::from(env_or("DB_PATH", "negotiation_arena.db")),
@@ -80,6 +96,11 @@ impl AppConfig {
             rate_limit: RateLimitConfig {
                 auth_max: env_parse("AUTH_RATE_LIMIT_MAX", 20)?,
                 auth_window_secs: env_parse("AUTH_RATE_LIMIT_WINDOW_SECS", 60)?,
+            },
+            lockout: LockoutConfig {
+                max_failures: env_parse("LOGIN_LOCKOUT_MAX_FAILURES", 5)?,
+                window_secs: env_parse("LOGIN_LOCKOUT_WINDOW_SECS", 900)?,
+                lockout_secs: env_parse("LOGIN_LOCKOUT_DURATION_SECS", 900)?,
             },
         };
 
@@ -106,9 +127,22 @@ impl AppConfig {
                 "JWT_TTL_SECONDS должен быть не меньше 60".into(),
             ));
         }
+        if self.security.jwt_refresh_max_age_secs < self.security.jwt_ttl_seconds {
+            return Err(AppError::Config(format!(
+                "JWT_REFRESH_MAX_AGE_SECONDS ({}) должен быть не меньше JWT_TTL_SECONDS ({})",
+                self.security.jwt_refresh_max_age_secs, self.security.jwt_ttl_seconds
+            )));
+        }
         if self.rate_limit.auth_max > 0 && self.rate_limit.auth_window_secs == 0 {
             return Err(AppError::Config(
                 "AUTH_RATE_LIMIT_WINDOW_SECS должен быть больше 0, если лимит включён".into(),
+            ));
+        }
+        if self.lockout.max_failures > 0
+            && (self.lockout.window_secs == 0 || self.lockout.lockout_secs == 0)
+        {
+            return Err(AppError::Config(
+                "LOGIN_LOCKOUT_WINDOW_SECS и LOGIN_LOCKOUT_DURATION_SECS должны быть больше 0, если lockout включён".into(),
             ));
         }
         for origin in &self.security.allowed_origins {

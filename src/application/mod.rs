@@ -67,8 +67,8 @@ impl Services {
         ));
         let auth = Arc::new(AuthService::new(
             repos.clone(),
-            config.security.jwt_secret.clone(),
-            config.security.jwt_ttl_seconds,
+            &config.security,
+            &config.lockout,
         ));
         let scenarios = Arc::new(ScenarioService::new(repos.clone(), providers.clone()));
         let settings = Arc::new(SettingsService::new(repos.clone()));
@@ -102,7 +102,7 @@ pub(crate) mod testsupport {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use crate::config::{AppConfig, SecurityConfig, ServerConfig, StorageConfig};
+    use crate::config::{AppConfig, LockoutConfig, SecurityConfig, ServerConfig, StorageConfig};
     use crate::infrastructure::crypto::SecretCipher;
     use crate::infrastructure::db::repos::SqliteRepos;
     use crate::infrastructure::db::Database;
@@ -123,6 +123,7 @@ pub(crate) mod testsupport {
                 admin_password: "admin123".into(),
                 encryption_secret: "test-encryption-secret".into(),
                 allowed_origins: Vec::new(),
+                jwt_refresh_max_age_secs: 7200,
             },
             storage: StorageConfig {
                 db_path: PathBuf::from(":memory:"),
@@ -131,6 +132,12 @@ pub(crate) mod testsupport {
             rate_limit: crate::config::RateLimitConfig {
                 auth_max: 0,
                 auth_window_secs: 60,
+            },
+            // В тестах много login — lockout выключен (0 = off).
+            lockout: LockoutConfig {
+                max_failures: 0,
+                window_secs: 900,
+                lockout_secs: 900,
             },
         }
     }

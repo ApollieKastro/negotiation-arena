@@ -1,4 +1,7 @@
 // HTTP-клиент API: /api/v1, Bearer, один retry через refresh при 401
+//
+// Refresh — single-use на сервере (ротация jti): параллельные 401 не должны
+// слать несколько refresh с одним токеном — сериализуем через общую Promise.
 
 import { accessToken, updateSession, clear } from './store.js';
 import { navigate } from './router.js';
@@ -13,6 +16,9 @@ export class ApiError extends Error {
     this.status = status;
   }
 }
+
+/** В полёте один refresh на все параллельные запросы. */
+let refreshInFlight = null;
 
 /**
  * request(path, {method, body, query, auth}) → JSON
@@ -69,8 +75,17 @@ export async function request(path, { method = 'GET', body, query, auth = true, 
   return data;
 }
 
-/** POST /auth/refresh {token} → AuthSession | null */
-async function tryRefresh() {
+/** Одна попытка refresh на все конкурентные 401 (single-use jti). */
+function tryRefresh() {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = doRefresh().finally(() => {
+    refreshInFlight = null;
+  });
+  return refreshInFlight;
+}
+
+/** POST /auth/refresh {token} → true при успехе */
+async function doRefresh() {
   const token = accessToken();
   if (!token) return false;
   try {

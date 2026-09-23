@@ -2,10 +2,14 @@
 //!
 //! Решения:
 //! * пароли — Argon2id через [`hash_password`]/[`verify_password`];
-//! * токен — JWT (`sub`, `login`, `role`, `iat`, `exp`);
+//! * токен — JWT (`sub`, `login`, `role`, `jti`, `iat`, `exp`);
 //! * при каждом запросе [`AuthService::verify`] роль читается из БД —
 //!   смена роли действует сразу, без переиздания токена;
-//! * права заданы явной таблицей [`authorize`], без `match` с `_ => true`.
+//! * права заданы явной таблицей [`authorize`], без `match` с `_ => true`;
+//! * lockout: после `max_failures` неудачных входов учётка блокируется
+//!   на `lockout_secs` (переживает рестарт, в БД);
+//! * refresh — single-use: каждый выпущенный `jti` можно продлить один раз,
+//!   повторный refresh с тем же токеном → 401.
 
 use std::sync::Arc;
 
@@ -13,6 +17,7 @@ use chrono::Utc;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 
+use crate::config::{LockoutConfig, SecurityConfig};
 use crate::domain::entities::user::{User, UserRole};
 use crate::domain::ports::{AuditRepository, UserRepository};
 use crate::error::{AppError, AppResult};
@@ -125,6 +130,8 @@ struct Claims {
     sub: String,
     login: String,
     role: String,
+    /// Уникальный id токена: одноразовый refresh (single-use rotation).
+    jti: String,
     iat: usize,
     exp: usize,
 }
@@ -138,18 +145,23 @@ pub struct AuthService {
     repos: Arc<SqliteRepos>,
     jwt_secret: String,
     jwt_ttl_seconds: u64,
+    /// Окно refresh после exp access-токена (от `iat`), секунды.
+    jwt_refresh_max_age_secs: u64,
+    lockout: LockoutConfig,
 }
 
 impl AuthService {
     pub fn new(
         repos: Arc<SqliteRepos>,
-        jwt_secret: impl Into<String>,
-        jwt_ttl_seconds: u64,
+        security: &SecurityConfig,
+        lockout: &LockoutConfig,
     ) -> Self {
         Self {
             repos,
-            jwt_secret: jwt_secret.into(),
-            jwt_ttl_seconds,
+            jwt_secret: security.jwt_secret.clone(),
+            jwt_ttl_seconds: security.jwt_ttl_seconds,
+            jwt_refresh_max_age_secs: security.jwt_refresh_max_age_secs,
+            lockout: lockout.clone(),
         }
     }
 
@@ -173,6 +185,10 @@ impl AuthService {
     /// иначе `Alice` / `alice` — разные учётки. При неизвестном логине
     /// выполняется dummy-проверка пароля, чтобы время ответа не выдавало
     /// existence-oracle.
+    ///
+    /// Lockout: после `max_failures` неудач подряд (в окне `window_secs`)
+    /// учётка блокируется на `lockout_secs` → [`AppError::TooManyRequests`].
+    /// Успешный вход сбрасывает счётчик.
     pub fn login(&self, login: &str, password: &str) -> AppResult<AuthSession> {
         let login = login.trim().to_lowercase();
         if login.is_empty() || password.is_empty() {
@@ -185,27 +201,79 @@ impl AuthService {
             self.audit(None, "auth.login_failed", None, Some(login.as_str()), None);
             return Err(AppError::Unauthorized("неверный логин или пароль".into()));
         };
+
+        // Блокировка до проверки пароля: не тратим Argon2 и не даём
+        // обходить lockout «правильным» паролем в период блокировки.
+        if let Some(until) = with_secret
+            .locked_until
+            .as_deref()
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        {
+            let now = Utc::now();
+            if until.with_timezone(&Utc) > now {
+                let retry = (until.with_timezone(&Utc) - now).num_seconds().max(1);
+                self.audit(
+                    Some(&with_secret.user.id),
+                    "auth.login_locked",
+                    None,
+                    None,
+                    None,
+                );
+                return Err(AppError::TooManyRequests(format!(
+                    "Учётная запись временно заблокирована. Повторите через {retry} с."
+                )));
+            }
+            // Блокировка истекла — сбрасываем и продолжаем вход.
+            self.repos
+                .users
+                .clear_login_failures(&with_secret.user.id)?;
+        }
+
         if !verify_password(password, &with_secret.password_hash) {
-            self.audit(
-                Some(&with_secret.user.id),
-                "auth.login_failed",
-                None,
-                None,
-                None,
-            );
+            self.record_login_failure(&with_secret, &login);
             return Err(AppError::Unauthorized("неверный логин или пароль".into()));
         }
         if !with_secret.user.is_active {
             return Err(AppError::Unauthorized("учётная запись отключена".into()));
         }
 
+        // Успех — сбрасываем lockout-счётчик.
+        self.repos
+            .users
+            .clear_login_failures(&with_secret.user.id)?;
         self.audit(Some(&with_secret.user.id), "auth.login", None, None, None);
         self.issue_token(with_secret.user)
     }
 
-    /// Продлевает валидный токен: проверяет подпись и активность пользователя.
+    /// Продлевает валидный токен: single-use `jti` + проверка активности.
+    ///
+    /// Access-токен может быть уже протухшим (exp) — refresh допустим в окне
+    /// `jwt_refresh_max_age_secs` от `iat`. Повторный refresh с тем же `jti`
+    /// → 401 (ротация: старый refresh-токен одноразовый).
     pub fn refresh(&self, token: &str) -> AppResult<AuthSession> {
-        let claims = self.decode(token)?;
+        let claims = self.decode_for_refresh(token)?;
+
+        // Одноразовость: jti фиксируется при первом refresh.
+        let purge_after = (Utc::now()
+            + chrono::Duration::seconds(self.jwt_refresh_max_age_secs as i64))
+        .to_rfc3339();
+        // Opportunistic cleanup протухших записей (не чаще ~раза за окно).
+        let _ = self
+            .repos
+            .users
+            .purge_expired_refresh_jtis(&Utc::now().to_rfc3339());
+
+        let first_use =
+            self.repos
+                .users
+                .mark_refresh_jti_used(&claims.jti, &claims.sub, &purge_after)?;
+        if !first_use {
+            self.audit(Some(&claims.sub), "auth.refresh_reuse", None, None, None);
+            return Err(AppError::Unauthorized(
+                "токен уже использован — войдите снова".into(),
+            ));
+        }
+
         let user = self
             .repos
             .users
@@ -354,6 +422,50 @@ impl AuthService {
 
     // ── Внутреннее ──
 
+    /// Фиксирует неудачный вход; при превышении лимита — аудит блокировки.
+    fn record_login_failure(
+        &self,
+        with_secret: &crate::domain::entities::user::UserWithSecret,
+        login: &str,
+    ) {
+        self.audit(
+            Some(&with_secret.user.id),
+            "auth.login_failed",
+            None,
+            Some(login),
+            None,
+        );
+        if self.lockout.max_failures == 0 {
+            return;
+        }
+        let update = match self.repos.users.record_login_failure(
+            &with_secret.user.id,
+            self.lockout.window_secs,
+            self.lockout.max_failures,
+            self.lockout.lockout_secs,
+        ) {
+            Ok(u) => u,
+            Err(err) => {
+                tracing::warn!(error = %err, "не удалось обновить lockout-счётчик");
+                return;
+            }
+        };
+        if update.locked_until.is_some() {
+            tracing::warn!(
+                login = %login,
+                failures = update.failed_login_count,
+                "учётка заблокирована после неудачных входов"
+            );
+            self.audit(
+                Some(&with_secret.user.id),
+                "auth.login_lockout",
+                None,
+                None,
+                Some(&update.locked_until.clone().unwrap_or_default()),
+            );
+        }
+    }
+
     fn create_user_internal(
         &self,
         login: &str,
@@ -378,6 +490,7 @@ impl AuthService {
             sub: user.id.clone(),
             login: user.login.clone(),
             role: user.role.slug().to_string(),
+            jti: uuid::Uuid::new_v4().to_string(),
             iat: now.max(0) as usize,
             exp: exp.max(0) as usize,
         };
@@ -395,15 +508,9 @@ impl AuthService {
         })
     }
 
+    /// Декод access-токена: подпись + exp (для [`Self::verify`]).
     fn decode(&self, token: &str) -> AppResult<Claims> {
-        let token = token.trim();
-        // Схема авторизации нечувствительна к регистру: `BEARER x` == `Bearer x`.
-        let token = token
-            .split_once(' ')
-            .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
-            .map(|(_, rest)| rest)
-            .unwrap_or(token)
-            .trim();
+        let token = self.strip_bearer(token);
         decode::<Claims>(
             token,
             &DecodingKey::from_secret(self.jwt_secret.as_bytes()),
@@ -411,6 +518,42 @@ impl AuthService {
         )
         .map(|data| data.claims)
         .map_err(|_| AppError::Unauthorized("недействительный токен".into()))
+    }
+
+    /// Декод для refresh: подпись обязательна, exp может быть просрочен,
+    /// но `iat + jwt_refresh_max_age_secs` — нет (окно ротации сессии).
+    fn decode_for_refresh(&self, token: &str) -> AppResult<Claims> {
+        let token = self.strip_bearer(token);
+        let mut validation = Validation::default();
+        validation.validate_exp = false;
+        let claims = decode::<Claims>(
+            token,
+            &DecodingKey::from_secret(self.jwt_secret.as_bytes()),
+            &validation,
+        )
+        .map(|data| data.claims)
+        .map_err(|_| AppError::Unauthorized("недействительный токен".into()))?;
+
+        let iat = claims.iat as i64;
+        let max_age = self.jwt_refresh_max_age_secs as i64;
+        let now = Utc::now().timestamp();
+        if now.saturating_sub(iat) > max_age {
+            return Err(AppError::Unauthorized(
+                "сессия устарела — войдите снова".into(),
+            ));
+        }
+        Ok(claims)
+    }
+
+    /// `Bearer x` / `bearer x` /裸 JWT — единая обработка схемы.
+    fn strip_bearer<'a>(&self, token: &'a str) -> &'a str {
+        let token = token.trim();
+        token
+            .split_once(' ')
+            .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
+            .map(|(_, rest)| rest)
+            .unwrap_or(token)
+            .trim()
     }
 
     fn audit(
@@ -580,6 +723,73 @@ mod tests {
         let second = svc.auth.refresh(&first.token).unwrap();
         assert_eq!(second.user.id, first.user.id);
         assert!(!second.token.is_empty());
+        assert_ne!(second.token, first.token, "ротация: новый JWT");
+    }
+
+    #[test]
+    fn refresh_is_single_use_same_token_rejected_twice() {
+        let (_db, svc) = setup().unwrap();
+        svc.auth.register("frank", "secret1", None).unwrap();
+        let first = svc.auth.login("frank", "secret1").unwrap();
+        let second = svc.auth.refresh(&first.token).unwrap();
+        // Повторный refresh с исходным токеном — reuse jti → 401.
+        let err = svc.auth.refresh(&first.token).unwrap_err();
+        assert!(matches!(err, AppError::Unauthorized(_)), "{err}");
+        // Новый токен после ротации можно продлить один раз.
+        let third = svc.auth.refresh(&second.token).unwrap();
+        assert!(!third.token.is_empty());
+        assert!(svc.auth.refresh(&second.token).is_err());
+    }
+
+    #[test]
+    fn lockout_after_max_failures_then_unlocks_after_clear() {
+        use crate::application::Services;
+        use crate::config::LockoutConfig;
+        use crate::infrastructure::crypto::SecretCipher;
+        use crate::infrastructure::db::Database;
+
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.run_migrations().unwrap();
+        let repos = Arc::new(SqliteRepos::new(db.clone()));
+        let cipher = Arc::new(SecretCipher::from_secret("test-encryption-secret").unwrap());
+        let mut cfg = crate::application::testsupport::test_config();
+        cfg.lockout = LockoutConfig {
+            max_failures: 3,
+            window_secs: 900,
+            lockout_secs: 900,
+        };
+        let services = Services::new(&cfg, repos.clone(), cipher).unwrap();
+
+        services.auth.register("gina", "secret1", None).unwrap();
+
+        // Две неудачи — ещё не блокировка.
+        assert!(services.auth.login("gina", "bad1").is_err());
+        assert!(services.auth.login("gina", "bad2").is_err());
+        // Третья — фиксирует lockout (сама попытка всё ещё 401).
+        assert!(services.auth.login("gina", "bad3").is_err());
+        // Четвёртая — уже 429 TooManyRequests.
+        let err = services.auth.login("gina", "secret1").unwrap_err();
+        assert!(
+            matches!(err, AppError::TooManyRequests(_)),
+            "ожидали TooManyRequests, получили: {err}"
+        );
+
+        // Сброс lockout (успех недоступен, пока блок) — снимаем вручную.
+        let user = repos.users.by_login("gina").unwrap().unwrap().user;
+        repos.users.clear_login_failures(&user.id).unwrap();
+        assert!(services.auth.login("gina", "secret1").is_ok());
+    }
+
+    #[test]
+    fn lockout_disabled_when_max_failures_zero() {
+        // testsupport::test_config() имеет max_failures = 0.
+        let (_db, svc) = setup().unwrap();
+        svc.auth.register("helen", "secret1", None).unwrap();
+        for _ in 0..10 {
+            assert!(svc.auth.login("helen", "nope").is_err());
+        }
+        // lockout выключен — пароль по-прежнему принимается.
+        assert!(svc.auth.login("helen", "secret1").is_ok());
     }
 
     #[test]

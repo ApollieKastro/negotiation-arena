@@ -9,7 +9,7 @@ use crate::domain::entities::provider::{
 };
 use crate::domain::entities::scenario::Scenario;
 use crate::domain::entities::session::{Session, SessionMessage};
-use crate::domain::entities::user::{User, UserRole, UserWithSecret};
+use crate::domain::entities::user::{LoginAttemptUpdate, User, UserRole, UserWithSecret};
 use crate::error::AppResult;
 
 // ─────────────────────────────────────────────────────────────
@@ -46,6 +46,25 @@ pub trait UserRepository: Send + Sync {
     fn set_active(&self, id: &str, is_active: bool) -> AppResult<()>;
     fn delete(&self, id: &str) -> AppResult<()>;
     fn count(&self) -> AppResult<u64>;
+
+    // ── Lockout неудачных входов ──
+    /// Фиксирует неудачную попытку: инкремент/сброс окна, опциональная блокировка.
+    fn record_login_failure(
+        &self,
+        id: &str,
+        window_secs: u64,
+        max_failures: u32,
+        lockout_secs: u64,
+    ) -> AppResult<LoginAttemptUpdate>;
+    /// Сбрасывает счётчик и блокировку (успешный вход).
+    fn clear_login_failures(&self, id: &str) -> AppResult<()>;
+
+    // ── Ротация refresh (single-use jti) ──
+    /// Помечает jti использованным. `Ok(false)` — jti уже был использован.
+    fn mark_refresh_jti_used(&self, jti: &str, user_id: &str, purge_after: &str)
+        -> AppResult<bool>;
+    /// Удаляет протухшие записи used_refresh_jtis (opportunist cleanup).
+    fn purge_expired_refresh_jtis(&self, now_rfc3339: &str) -> AppResult<u64>;
 }
 
 // ─────────────────────────────────────────────────────────────

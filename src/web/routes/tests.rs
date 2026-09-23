@@ -13,7 +13,7 @@ use tower::ServiceExt; // `oneshot`
 
 use super::build;
 use crate::application::Services;
-use crate::config::{AppConfig, SecurityConfig, ServerConfig, StorageConfig};
+use crate::config::{AppConfig, LockoutConfig, SecurityConfig, ServerConfig, StorageConfig};
 use crate::domain::entities::user::UserRole;
 use crate::domain::ports::UserRepository;
 use crate::infrastructure::crypto::SecretCipher;
@@ -44,6 +44,7 @@ fn test_config() -> AppConfig {
             admin_password: ADMIN_PASSWORD.into(),
             encryption_secret: "test-encryption-secret".into(),
             allowed_origins: Vec::new(),
+            jwt_refresh_max_age_secs: 7200,
         },
         storage: StorageConfig {
             db_path: std::path::PathBuf::from(":memory:"),
@@ -53,6 +54,12 @@ fn test_config() -> AppConfig {
             // В тестах много login — лимит выключен.
             auth_max: 0,
             auth_window_secs: 60,
+        },
+        // В тестах много login — lockout выключен.
+        lockout: LockoutConfig {
+            max_failures: 0,
+            window_secs: 900,
+            lockout_secs: 900,
         },
     }
 }
@@ -265,7 +272,7 @@ async fn register_login_me_refresh_flow() {
     assert_eq!(body["login"], "bob");
     assert_eq!(body["role"], "user");
 
-    // Refresh продлевает.
+    // Refresh продлевает (single-use: первый вызов — ок).
     let (status, body) = app
         .call(
             "POST",
@@ -275,7 +282,25 @@ async fn register_login_me_refresh_flow() {
         )
         .await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body["token"].as_str().is_some_and(|t| !t.is_empty()));
+    let rotated = body["token"].as_str().expect("token").to_string();
+
+    // Повторный refresh с тем же токеном — reuse → 401.
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v1/auth/refresh",
+            Some(json!({ "token": token })),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+
+    // Новый токен после ротации валиден для /auth/me.
+    let (status, body) = app
+        .call("GET", "/api/v1/auth/me", None, Some(&rotated))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["login"], "bob");
 }
 
 #[tokio::test]
@@ -290,6 +315,79 @@ async fn login_with_wrong_password_is_unauthorized() {
         )
         .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+// ── Lockout неудачных входов ───────────────────────────────────
+
+/// Стенд с lockout: `max` неудач → блокировка на `lockout_secs`.
+impl TestApp {
+    fn with_login_lockout(max_failures: u32) -> Self {
+        let mut config = test_config();
+        config.lockout.max_failures = max_failures;
+        config.lockout.window_secs = 900;
+        config.lockout.lockout_secs = 900;
+
+        let db = Arc::new(Database::open_in_memory().expect("in-memory БД"));
+        db.run_migrations().expect("миграции");
+        let repos = Arc::new(SqliteRepos::new(db.clone()));
+        let hash = crate::infrastructure::crypto::password::hash_password(ADMIN_PASSWORD);
+        repos
+            .users
+            .create(ADMIN_LOGIN, &hash, UserRole::Admin, Some("Администратор"))
+            .expect("create admin");
+        seeds::run(&db).expect("сиды");
+
+        let cipher = Arc::new(
+            SecretCipher::from_secret(&config.security.encryption_secret).expect("cipher"),
+        );
+        let services = Arc::new(Services::new(&config, repos, cipher.clone()).expect("services"));
+        let state = AppState {
+            config: Arc::new(config),
+            db,
+            cipher,
+            services,
+        };
+        Self { app: build(state) }
+    }
+}
+
+#[tokio::test]
+async fn login_lockout_after_max_failures_returns_429() {
+    let app = TestApp::with_login_lockout(3);
+    let wrong = json!({ "login": ADMIN_LOGIN, "password": "wrong-password" });
+
+    // Две неудачи — 401 (lockout ещё не сработал).
+    let (status, _) = app
+        .call("POST", "/api/v1/auth/login", Some(wrong.clone()), None)
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _) = app
+        .call("POST", "/api/v1/auth/login", Some(wrong.clone()), None)
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // Третья неудача фиксирует блокировку (сама — ещё 401).
+    let (status, _) = app
+        .call("POST", "/api/v1/auth/login", Some(wrong.clone()), None)
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // Четвёртая попытка — 429, даже с правильным паролем.
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v1/auth/login",
+            Some(json!({ "login": ADMIN_LOGIN, "password": ADMIN_PASSWORD })),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .is_some_and(|m| m.contains("заблокирована")),
+        "{body}"
+    );
 }
 
 // ── Auth middleware / RBAC ─────────────────────────────────────

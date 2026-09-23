@@ -52,11 +52,15 @@ docker-compose up -d
 | `PORT` | Порт HTTP-сервера | `3001` |
 | `JWT_SECRET` | Секрет подписи JWT (мин. 16 символов) | dev-значение (сменить в проде!) |
 | `JWT_TTL_SECONDS` | TTL access-токена, сек (мин. 60) | `86400` |
+| `JWT_REFRESH_MAX_AGE_SECONDS` | Окно refresh после exp access-токена, сек (≥ `JWT_TTL_SECONDS`) | `604800` |
 | `ADMIN_PASSWORD` | Пароль начального админа при первом запуске (мин. 6 символов) | `admin123` |
 | `ENCRYPTION_KEY` | Мастер-ключ AES-256-GCM для API-ключей провайдеров; без него наследуется из `JWT_SECRET` | — |
 | `ALLOWED_ORIGINS` | CORS-allowlist через запятую (`https://…`); пусто — Any (dev) | — |
 | `AUTH_RATE_LIMIT_MAX` | Rate-limit auth (login/register/refresh) по IP: запросов в окне; `0` — off | `20` |
 | `AUTH_RATE_LIMIT_WINDOW_SECS` | Окно rate-limit, сек | `60` |
+| `LOGIN_LOCKOUT_MAX_FAILURES` | Неудачных входов до блокировки учётки; `0` — off | `5` |
+| `LOGIN_LOCKOUT_WINDOW_SECS` | Окно накопления неудач lockout, сек | `900` |
+| `LOGIN_LOCKOUT_DURATION_SECS` | Длительность lockout, сек | `900` |
 | `DB_PATH` | Путь к файлу SQLite | `negotiation_arena.db` |
 | `MODELS_DIR` | Каталог локальных моделей (STT/TTS) | `models` |
 

@@ -13,6 +13,7 @@ services:
       # Значения ниже — dev-фоллбэки, в проде задайте свои.
       JWT_SECRET: ${JWT_SECRET:-dev-only-jwt-secret-change-me-in-production}
       JWT_TTL_SECONDS: ${JWT_TTL_SECONDS:-86400}
+      JWT_REFRESH_MAX_AGE_SECONDS: ${JWT_REFRESH_MAX_AGE_SECONDS:-604800}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-${JWT_SECRET:-dev-only-jwt-secret-change-me-in-production}}
       # CORS: пусто = Any (dev). В проде: https://app.example.com,…
@@ -20,6 +21,10 @@ services:
       # Rate-limit auth по IP (0 = off)
       AUTH_RATE_LIMIT_MAX: ${AUTH_RATE_LIMIT_MAX:-20}
       AUTH_RATE_LIMIT_WINDOW_SECS: ${AUTH_RATE_LIMIT_WINDOW_SECS:-60}
+      # Lockout неудачных входов per-login (0 = off)
+      LOGIN_LOCKOUT_MAX_FAILURES: ${LOGIN_LOCKOUT_MAX_FAILURES:-5}
+      LOGIN_LOCKOUT_WINDOW_SECS: ${LOGIN_LOCKOUT_WINDOW_SECS:-900}
+      LOGIN_LOCKOUT_DURATION_SECS: ${LOGIN_LOCKOUT_DURATION_SECS:-900}
       DB_PATH: /app/data/negotiation_arena.db
       MODELS_DIR: /app/data/models
     volumes:
