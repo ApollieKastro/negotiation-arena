@@ -1,6 +1,7 @@
 //! Сессии: старт, ход диалога (LLM + скоринг), финализация с отчётом.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::application::auth::AuthContext;
 use crate::application::provider::ProviderService;
@@ -13,6 +14,7 @@ use crate::domain::ports::{
     AuditRepository, ChatMessage, ChatRequest, LlmUsageRepository, ScenarioRepository,
     SessionRepository,
 };
+use crate::domain::services::judge::{self, JudgeScores};
 use crate::domain::services::scoring::SessionReport;
 use crate::domain::services::{analysis, scoring};
 use crate::error::{AppError, AppResult};
@@ -21,6 +23,10 @@ use crate::infrastructure::db::repos::SqliteRepos;
 /// Резервный максимум ходов, если настройка `platform.max_turns` не задана
 /// или не является числом. Правда — в настройках ([`global_keys::MAX_TURNS`]).
 const FALLBACK_MAX_TURNS: u32 = 40;
+
+/// Таймаут запроса к LLM-судье. Превышение → ход считается на эвристике:
+/// оценка модели не должна задерживать диалог.
+const JUDGE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Максимальная длина реплики игрока в символах (защита от DoS и раздувания prompt).
 const MAX_PLAYER_TEXT_CHARS: usize = 4000;
@@ -71,6 +77,9 @@ pub struct TurnOutcome {
     pub strategy_slug: &'static str,
     pub spin_code: Option<&'static str>,
     pub total_score: i32,
+    /// Оценка LLM-судьи (0..=10 по трём шкалам), `None` — судья не работал
+    /// (выключен, сбой, квота) и баллы счищены на эвристике целиком.
+    pub judge: Option<JudgeScores>,
 }
 
 /// Результат старта сессии: сессия + сценарий для карточек UI.
@@ -342,8 +351,10 @@ impl SessionService {
 
     /// Полный ход: ответ LLM собеседника + анализ и скоринг реплики игрока.
     ///
-    /// Порядок: сначала сетевой вызов LLM (в репозитории ничего не трогаем
-    /// при ошибке), затем сохранение обоих сообщений и метрик.
+    /// Порядок: сетевые вызовы LLM (в репозитории ничего не трогаем при
+    /// ошибке), затем сохранение обоих сообщений и метрик. Ответ собеседника
+    /// и оценка LLM-судьи выполняются параллельно; сбой судьи не валит ход —
+    /// баллы тогда считаются на эвристике целиком.
     pub async fn submit_turn(
         &self,
         actor: &AuthContext,
@@ -382,16 +393,23 @@ impl SessionService {
         let mut branch = self.current_branch(&session.id)?;
         let history = self.repos.sessions.messages(session_id)?;
 
-        // 1) Ответ собеседника (LLM) — до записи в БД.
+        // 1) Ответ собеседника (LLM) и оценка судьи — параллельно, до записи в БД.
         // Резолв модели: предпочтение пользователя → глобальное назначение роли.
-        let partner_reply = self
-            .partner_reply(&scenario, &history, player_text, &session.user_id)
-            .await?;
+        let (partner_reply, judge_scores) = tokio::join!(
+            self.partner_reply(&scenario, &history, player_text, &session.user_id),
+            self.judge(&scenario, &history, player_text, &session.user_id),
+        );
+        let partner_reply = partner_reply?;
 
-        // 2) Анализ и скоринг реплики игрока.
+        // 2) Анализ и скоринг реплики игрока: эвристика, смешанная с LLM-оценкой.
         let analysis = analysis::analyze(player_text);
+        let heuristic = scoring::heuristic_points(&analysis);
+        let points = match judge_scores {
+            Some(scores) => scoring::blend(heuristic, scores, self.judge_weight()),
+            None => heuristic,
+        };
         let score_before = session.total_score;
-        let score_delta = scoring::apply_analysis(&mut session.metrics, &analysis);
+        let score_delta = scoring::apply_points(&mut session.metrics, &analysis, points);
         session.total_score = session.metrics.total_score();
         session.turn_count += 1;
         let total_score = session.total_score;
@@ -437,6 +455,7 @@ impl SessionService {
             strategy_slug: analysis.strategy.slug(),
             spin_code: analysis.spin.map(|s| s.code()),
             total_score, // накопленный счёт сессии (не дельта этого хода)
+            judge: judge_scores,
         })
     }
 
@@ -503,6 +522,8 @@ impl SessionService {
             strategy_slug: analysis.strategy.slug(),
             spin_code: analysis.spin.map(|s| s.code()),
             total_score,
+            // Без сети — только эвристика.
+            judge: None,
         })
     }
 
@@ -665,6 +686,101 @@ impl SessionService {
             return Err(AppError::upstream("LLM", hint));
         }
         Ok(content)
+    }
+
+    // ── LLM-судья ──
+
+    /// Оценивает последнюю реплику игрока моделью (0..=10 по трём шкалам).
+    ///
+    /// Судья ничего не ломает: при выключенной настройке, исчерпанной квоте,
+    /// ненастроенной модели, таймауте или неразборчивом ответе возвращается
+    /// `None` — вызывающая сторона считает ход на эвристике целиком.
+    async fn judge(
+        &self,
+        scenario: &Scenario,
+        history: &[SessionMessage],
+        player_text: &str,
+        user_id: &str,
+    ) -> Option<JudgeScores> {
+        if !self.judge_enabled() {
+            return None;
+        }
+        // Квота: судья — тоже расход токенов, при исчерпании молча на эвристику.
+        if let Err(err) = self.ensure_llm_quota(user_id, self.llm_daily_token_limit().ok()?) {
+            tracing::warn!(error = %err, "судья: квота исчерпана, считаем на эвристике");
+            return None;
+        }
+        let (chat, model_key) = match self.providers.resolve_chat_for(user_id).await {
+            Ok(resolved) => resolved,
+            Err(err) => {
+                tracing::warn!(error = %err, "судья: LLM не настроена, считаем на эвристике");
+                return None;
+            }
+        };
+
+        let request = ChatRequest::new(
+            model_key,
+            vec![
+                ChatMessage::system(judge::SYSTEM_PROMPT),
+                ChatMessage::user(judge::build_prompt(scenario, history, player_text)),
+            ],
+        )
+        .with_temperature(0.0)
+        .with_max_tokens(120);
+
+        let response = match tokio::time::timeout(JUDGE_TIMEOUT, chat.chat(request)).await {
+            Ok(Ok(response)) => response,
+            Ok(Err(err)) => {
+                tracing::warn!(error = %err, "судья: ошибка запроса, считаем на эвристике");
+                return None;
+            }
+            Err(_) => {
+                tracing::warn!(
+                    timeout = JUDGE_TIMEOUT.as_secs(),
+                    "судья: таймаут, считаем на эвристике"
+                );
+                return None;
+            }
+        };
+
+        let tokens = response
+            .usage
+            .total_tokens
+            .map(u64::from)
+            .unwrap_or_else(|| estimate_tokens(&response.content));
+        self.record_llm_usage(user_id, tokens);
+
+        let scores = judge::parse(&response.content);
+        if scores.is_none() {
+            tracing::warn!(
+                content = %response.content,
+                "судья: не удалось разобрать ответ, считаем на эвристике"
+            );
+        }
+        scores
+    }
+
+    /// LLM-судья включён: `scoring.llm_judge_enabled` (по умолчанию `true`).
+    fn judge_enabled(&self) -> bool {
+        let value = self
+            .settings
+            .get_global(global_keys::LLM_JUDGE_ENABLED)
+            .unwrap_or_else(|_| "true".to_string());
+        !matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "" | "0" | "false" | "off" | "no"
+        )
+    }
+
+    /// Доля LLM-оценки в баллах хода: `scoring.llm_judge_weight` (0..=1),
+    /// иначе [`judge::DEFAULT_WEIGHT`] (0.4).
+    fn judge_weight(&self) -> f32 {
+        self.settings
+            .get_global(global_keys::LLM_JUDGE_WEIGHT)
+            .ok()
+            .and_then(|v| v.trim().parse::<f32>().ok())
+            .filter(|w| (0.0..=1.0).contains(w))
+            .unwrap_or(judge::DEFAULT_WEIGHT)
     }
 
     fn load(&self, session_id: &str) -> AppResult<Session> {

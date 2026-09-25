@@ -58,12 +58,21 @@ export function spinBadge(code) {
   });
 }
 
+/** Оценка LLM-судьи: стратегия/аргументация/тон, 0–10. */
+export function judgeChip(j) {
+  if (!j) return null;
+  return h('span.badge.badge-info.no-dot', {
+    title: t('session.judgeTitle', { s: j.strategy, a: j.argument, t: j.tone }),
+    text: t('session.judgeChip', { n: `${j.strategy}/${j.argument}/${j.tone}` }),
+  });
+}
+
 /**
  * Пузырь реплики.
  * @param {object} msg — SessionMessage { id, role, content, strategy, score_delta }
  * @param {{ partnerName?: string, spin?: string|null }} [opts]
  */
-export function messageNode(msg, { partnerName = '', spin = null } = {}) {
+export function messageNode(msg, { partnerName = '', spin = null, judge = null } = {}) {
   const isPlayer = msg.role === 'player';
   const wrap = h('div', {
     // msgId нужен странице сессии для ветвления (форк по реплике).
@@ -80,6 +89,8 @@ export function messageNode(msg, { partnerName = '', spin = null } = {}) {
     const sb = strategyBadge(msg.strategy);
     if (sb) meta.push(sb);
     if (spin) meta.push(spinBadge(spin));
+    const jc = judgeChip(judge);
+    if (jc) meta.push(jc);
   }
 
   const bubble = h('div', {

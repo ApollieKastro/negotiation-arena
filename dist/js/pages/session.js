@@ -32,6 +32,7 @@ export function renderPage(root, params = {}) {
   let scenario = null;
   let branches = [];
   let spinByMsgId = new Map();
+  let judgeByMsgId = new Map();
   let busy = false;
   let voiceOn = false;
   let mediaRecorder = null;
@@ -220,6 +221,7 @@ export function renderPage(root, params = {}) {
     return messageNode(msg, {
       partnerName: partnerLabel(),
       spin: spinByMsgId.get(msg.id) || null,
+      judge: judgeByMsgId.get(msg.id) || null,
     });
   }
 
@@ -420,6 +422,7 @@ export function renderPage(root, params = {}) {
         turn_index: session.turn_count + 1,
       };
       if (out.spin_code) spinByMsgId.set(playerMsg.id, out.spin_code);
+      if (out.judge) judgeByMsgId.set(playerMsg.id, out.judge);
 
       appendMessage(playerMsg);
       appendMessage(partnerMsg);

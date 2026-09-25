@@ -2,5 +2,6 @@
 
 pub mod analysis;
 pub mod avatar;
+pub mod judge;
 pub mod progress;
 pub mod scoring;

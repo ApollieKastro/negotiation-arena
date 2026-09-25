@@ -19,7 +19,7 @@ web/          роуты, middleware (auth, RBAC, rate-limit), хендлеры,
     ▼
 application/  auth, session, scenario, stats, settings, provider, voice, audit
     ▼
-domain/       сущности, порты (трейты), services: analysis, scoring, progress
+domain/       сущности, порты (трейты), services: analysis, judge, scoring, progress
     ▼
 infrastructure/  SQLite-репо + миграции, адаптеры LLM/STT/TTS, AES-256-GCM, seeds
 ```
@@ -43,7 +43,7 @@ infrastructure/  SQLite-репо + миграции, адаптеры LLM/STT/TT
 
 ```
 start  →  status=active, opening (partner)
-turn*  →  LLM-ответ + анализ реплики игрока + commit_turn (одна транзакция)
+turn*  →  LLM-ответ ∥ LLM-судья + анализ реплики игрока + commit_turn (одна транзакция)
 finish →  build_report → status=finished, ending, feedback, XP += total_score
 abandon→  status=abandoned (без отчёта/XP)
 ```
@@ -103,6 +103,18 @@ abandon→  status=abandoned (без отчёта/XP)
 | Объективные критерии | +8 |
 
 `total_score` = сумма всех дельт по сессии; `TurnOutcome.total_score` — **накопленный** итог, не дельта хода.
+
+**LLM-судья поверх эвристики** (`domain/services/judge`): параллельно ответу собеседника выполняется отдельный короткий запрос к назначенной LLM (`judge::SYSTEM_PROMPT`), который возвращает строго `{"strategy":0-10,"argument":0-10,"tone":0-10}`. Баллы хода смешиваются (`scoring::blend`):
+
+```
+round((1 - w) * эвристика + w * LLM)     w = scoring.llm_judge_weight (default 0.4)
+```
+
+Шкалы судьи приводятся к диапазонам эвристики: стратегия 0…15, аргумент 0…10, тон −5…+5 (оценка 5 = нейтральный тон). Бонус за техники (SPIN/интересы/критерии) и все счётчики для feedback считает **только эвристика** — смешивание меняет лишь числа баллов.
+
+Настройки: `scoring.llm_judge_enabled` (default `true`), `scoring.llm_judge_weight` (default `0.4`).
+
+Сбой судьи **не валит ход** — включая выключенную настройку, исчерпанную дневную квоту, ненастроенную модель, таймаут 10 с и неразборчивый ответ — баллы берутся с эвристики целиком, `TurnOutcome.judge = null`. Успешная оценка приходит в ответе хода как `judge` и показывается в UI бейджем `LLM s/a/t`.
 
 ### 2.4 Итоговый отчёт (`scoring::build_report`)
 
@@ -236,7 +248,7 @@ docker compose up -d
 | `LOCAL_STT_SCRIPT` / `LOCAL_TTS_SCRIPT` | пути к скриптам | `scripts/local_*.py` |
 | `RUST_LOG` | tracing filter | — |
 
-**Глобальные настройки БД** (админка): `platform.site_name`, `platform.default_theme`, `platform.default_font_size`, `platform.default_locale`, `platform.max_turns`, `platform.llm_daily_token_limit` (0=off → 429 при исчерпании).
+**Глобальные настройки БД** (админка): `platform.site_name`, `platform.default_theme`, `platform.default_font_size`, `platform.default_locale`, `platform.max_turns`, `platform.llm_daily_token_limit` (0=off → 429 при исчерпании), `scoring.llm_judge_enabled` (LLM-судья, default `true`), `scoring.llm_judge_weight` (доля LLM в баллах хода, default `0.4`).
 
 **Пользовательские:** `theme`, `font_size`, `locale`, `sound_enabled`.
 
