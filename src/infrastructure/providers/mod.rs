@@ -9,7 +9,7 @@
 //! * `gemini` — Google AI (диалог);
 //! * `elevenlabs` — синтез речи;
 //! * `deepgram` — распознавание и синтез речи;
-//! * `local` — локальные модели (каталог; вызовы подключаются на этапе 7);
+//! * `local` — локальные модели: каталог + STT/TTS через `local_voice` (subprocess);
 //! * `mock` — демо-режим без API-ключей (офлайн-диалог и генерация сценариев).
 
 pub mod anthropic;
@@ -18,6 +18,7 @@ pub mod elevenlabs;
 pub mod factory;
 pub mod gemini;
 pub mod local;
+pub mod local_voice;
 pub mod mock;
 pub mod openai_compat;
 
@@ -26,7 +27,7 @@ pub mod openai_compat;
 #[allow(unused_imports)]
 pub use factory::{ProviderFactory, ProviderHandle};
 #[allow(unused_imports)]
-pub use local::{LocalModelFile, LocalModelManager};
+pub use local::{DownloadLocalModelRequest, LocalModelFile, LocalModelManager};
 
 use crate::error::{AppError, AppResult};
 

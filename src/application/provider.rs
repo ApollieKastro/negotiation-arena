@@ -14,7 +14,9 @@ use crate::domain::ports::{
 use crate::error::{AppError, AppResult};
 use crate::infrastructure::crypto::{mask_secret, SecretCipher};
 use crate::infrastructure::db::repos::SqliteRepos;
-use crate::infrastructure::providers::{ProviderFactory, ProviderHandle};
+use crate::infrastructure::providers::{
+    DownloadLocalModelRequest, LocalModelFile, ProviderFactory, ProviderHandle,
+};
 
 /// Управление провайдерами и моделями (RBAC: `ManageProviders`).
 pub struct ProviderService {
@@ -371,6 +373,94 @@ impl ProviderService {
             .into_iter()
             .filter(|m| m.role == role && m.is_enabled)
             .collect())
+    }
+
+    // ── Локальные модели (MODELS_DIR) ──
+
+    /// Список файлов локальных моделей (рекурсивный, без `.cache`).
+    pub fn list_local_models(&self, actor: &AuthContext) -> AppResult<Vec<LocalModelFile>> {
+        actor.require(super::Permission::ManageProviders)?;
+        let manager = self.local_manager();
+        manager.list()
+    }
+
+    /// Скачивает модель: прямой URL **или** HF repo `org/name`
+    /// (+ опциональный `filename` для одного файла; без него — весь репо через `hf`).
+    pub async fn download_local_model(
+        &self,
+        actor: &AuthContext,
+        req: DownloadLocalModelRequest,
+    ) -> AppResult<LocalModelFile> {
+        actor.require(super::Permission::ManageProviders)?;
+        let source = req.source.trim();
+        if source.is_empty() {
+            return Err(AppError::BadRequest(
+                "укажите URL или HuggingFace repo (org/name)".into(),
+            ));
+        }
+
+        let manager = self.local_manager();
+        let file = if crate::infrastructure::providers::local::is_hf_repo_id(source)
+            && !source.starts_with("http://")
+            && !source.starts_with("https://")
+        {
+            manager
+                .download_hf(
+                    source,
+                    req.filename.as_deref().map(str::trim),
+                    req.name.as_deref().map(str::trim),
+                )
+                .await?
+        } else if source.starts_with("http://") || source.starts_with("https://") {
+            let name = req
+                .name
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| {
+                    source
+                        .rsplit('/')
+                        .next()
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .unwrap_or_default()
+                });
+            if name.is_empty() {
+                return Err(AppError::BadRequest(
+                    "не удалось вывести имя файла из URL — укажите `name`".into(),
+                ));
+            }
+            manager.download(source, &name).await?
+        } else {
+            // Явный HF repo id без схемы (даже если не прошёл is_hf_repo_id строго).
+            manager
+                .download_hf(
+                    source,
+                    req.filename.as_deref().map(str::trim),
+                    req.name.as_deref().map(str::trim),
+                )
+                .await?
+        };
+
+        self.audit(actor, "local_model.download", &file.name, Some(source));
+        Ok(file)
+    }
+
+    /// Удаляет файл локальной модели по относительному пути.
+    pub fn delete_local_model(&self, actor: &AuthContext, name: &str) -> AppResult<()> {
+        actor.require(super::Permission::ManageProviders)?;
+        let manager = self.local_manager();
+        manager.delete(name)?;
+        self.audit(actor, "local_model.delete", name, None);
+        Ok(())
+    }
+
+    fn local_manager(&self) -> crate::infrastructure::providers::LocalModelManager {
+        crate::infrastructure::providers::LocalModelManager::new(
+            self.factory.models_dir().clone(),
+            self.factory.http().clone(),
+        )
     }
 
     // ── Фасады портов (для SessionService / ScenarioService) ──

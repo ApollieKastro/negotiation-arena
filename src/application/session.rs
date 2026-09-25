@@ -7,7 +7,7 @@ use crate::application::provider::ProviderService;
 use crate::application::settings::{global_keys, user_keys, SettingsService};
 use crate::domain::entities::scenario::{Difficulty, Scenario};
 use crate::domain::entities::session::{
-    MessageRole, Session, SessionMessage, SessionMode, SessionStatus,
+    MessageRole, Session, SessionBranch, SessionMessage, SessionMode, SessionStatus,
 };
 use crate::domain::ports::{
     AuditRepository, ChatMessage, ChatRequest, LlmUsageRepository, ScenarioRepository,
@@ -27,6 +27,34 @@ const MAX_PLAYER_TEXT_CHARS: usize = 4000;
 
 /// Верхняя граница `limit` для истории сессий.
 const MAX_HISTORY_LIMIT: u32 = 200;
+
+/// Максимум веток на сессию (включая main) — защита от раздувания дерева.
+pub const MAX_BRANCHES: u64 = 16;
+
+/// Результат создания ветки: новая ветка + сессия, откатнутая к точке ветвления.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BranchCreated {
+    pub branch: SessionBranch,
+    pub session: Session,
+}
+
+/// Пересчитывает метрики ветки по её репликам — детерминированный fold
+/// (тот же `analyze` + `apply_analysis`, что и в ходе).
+///
+/// Нужен при форке: снапшот в точке ветвления восстанавливается из
+/// скопированного префикса, а не хранится в каждой реплике.
+fn replay_metrics(
+    messages: &[SessionMessage],
+) -> (crate::domain::entities::session::SessionMetrics, u32) {
+    let mut metrics = crate::domain::entities::session::SessionMetrics::default();
+    let mut turns = 0u32;
+    for msg in messages.iter().filter(|m| m.role == MessageRole::Player) {
+        let analysis = analysis::analyze(&msg.content);
+        scoring::apply_analysis(&mut metrics, &analysis);
+        turns += 1;
+    }
+    (metrics, turns)
+}
 
 /// Грубая оценка токенов, когда провайдер не вернул `usage` (~4 символа на токен).
 fn estimate_tokens(text: &str) -> u64 {
@@ -91,14 +119,24 @@ impl SessionService {
         Ok(session)
     }
 
+    /// Реплики диалога: по умолчанию — текущая ветка, с `branch_id` — указанная.
     pub fn messages(
         &self,
         actor: &AuthContext,
         session_id: &str,
+        branch_id: Option<&str>,
     ) -> AppResult<Vec<SessionMessage>> {
         let session = self.load(session_id)?;
         self.ensure_owner(actor, &session)?;
-        self.repos.sessions.messages(session_id)
+        match branch_id {
+            None => self.repos.sessions.messages(session_id),
+            Some(bid) => {
+                let branch = self.load_branch_for(&session, bid)?;
+                self.repos
+                    .sessions
+                    .messages_in_branch(session_id, &branch.id)
+            }
+        }
     }
 
     pub fn history(
@@ -111,6 +149,132 @@ impl SessionService {
         self.repos
             .sessions
             .list_by_user(&actor.user_id, limit, offset)
+    }
+
+    // ── Ветвление диалога ──
+
+    /// Ветки сессии в порядке создания (main — первая).
+    pub fn branches(&self, actor: &AuthContext, session_id: &str) -> AppResult<Vec<SessionBranch>> {
+        let session = self.load(session_id)?;
+        self.ensure_owner(actor, &session)?;
+        self.repos.sessions.branches(session_id)
+    }
+
+    /// Ветвится **после** реплики собеседника: копирует префикс реплик до
+    /// точки ветвления в новую ветку, пересчитывает метрики в этой точке
+    /// и делает ветку текущей (сессия «откатывается» к ней).
+    ///
+    /// Ограничения: только активная сессия, только partner-реплика,
+    /// не больше [`MAX_BRANCHES`] веток.
+    pub fn create_branch(
+        &self,
+        actor: &AuthContext,
+        session_id: &str,
+        after_message_id: &str,
+    ) -> AppResult<BranchCreated> {
+        let mut session = self.load(session_id)?;
+        self.ensure_owner_strict(actor, &session)?;
+        if session.status != SessionStatus::Active {
+            return Err(AppError::BadRequest(
+                "ветвление доступно только для активной сессии".into(),
+            ));
+        }
+        if self.repos.sessions.count_branches(session_id)? >= MAX_BRANCHES {
+            return Err(AppError::BadRequest(format!(
+                "достигнут лимит веток ({MAX_BRANCHES})"
+            )));
+        }
+
+        // Точка ветвления — реплика этой сессии.
+        let point = self
+            .repos
+            .sessions
+            .message(after_message_id)?
+            .filter(|m| m.session_id == session.id)
+            .ok_or_else(|| AppError::NotFound("реплика не найдена".into()))?;
+        // Модель дерева: форк только после реплики собеседника — тогда новая
+        // ветка всегда заканчивается partner-репликой и ходы не «двойнятся».
+        if point.role != MessageRole::Partner {
+            return Err(AppError::BadRequest(
+                "ветвление возможно только после реплики собеседника".into(),
+            ));
+        }
+
+        let source =
+            self.load_branch_for(&session, point.branch_id.as_deref().unwrap_or_default())?;
+        // Префикс: реплики ветки-источника до точки ветвления включительно.
+        let prefix: Vec<SessionMessage> = self
+            .repos
+            .sessions
+            .messages_in_branch(session_id, &source.id)?
+            .into_iter()
+            .filter(|m| m.turn_index <= point.turn_index)
+            .collect();
+
+        // Снапшот метрик в точке ветвления — replay по player-репликам префикса.
+        let (metrics, turn_count) = replay_metrics(&prefix);
+        let total_score = metrics.total_score();
+
+        let branch = SessionBranch {
+            id: uuid::Uuid::new_v4().to_string(),
+            session_id: session.id.clone(),
+            parent_id: Some(source.id.clone()),
+            label: "fork".into(),
+            fork_turn_index: point.turn_index,
+            metrics: metrics.clone(),
+            total_score,
+            turn_count,
+            is_current: true,
+            created_at: chrono::Utc::now().to_rfc3339(),
+        };
+        // Копии префикса: свои id, та же последовательность ходов.
+        let copies: Vec<SessionMessage> = prefix
+            .iter()
+            .map(|m| SessionMessage {
+                id: uuid::Uuid::new_v4().to_string(),
+                branch_id: Some(branch.id.clone()),
+                ..m.clone()
+            })
+            .collect();
+
+        // Сессия откатывается к точке ветвления (status/feedback не трогаем).
+        session.metrics = metrics;
+        session.total_score = total_score;
+        session.turn_count = turn_count;
+
+        self.repos
+            .sessions
+            .fork_branch(&branch, &copies, &session)?;
+        self.audit(actor, "session.branch", &session.id);
+        Ok(BranchCreated { branch, session })
+    }
+
+    /// Переключает текущую ветку: состояние сессии (метрики/счёт/ходы)
+    /// подставляется из снапшота ветки. No-op, если ветка уже текущая.
+    pub fn switch_branch(
+        &self,
+        actor: &AuthContext,
+        session_id: &str,
+        branch_id: &str,
+    ) -> AppResult<(Session, SessionBranch)> {
+        let mut session = self.load(session_id)?;
+        self.ensure_owner_strict(actor, &session)?;
+        if session.status != SessionStatus::Active {
+            return Err(AppError::BadRequest(
+                "переключение веток доступно только для активной сессии".into(),
+            ));
+        }
+        let mut branch = self.load_branch_for(&session, branch_id)?;
+        if !branch.is_current {
+            session.metrics = branch.metrics.clone();
+            session.total_score = branch.total_score;
+            session.turn_count = branch.turn_count;
+            self.repos.sessions.switch_branch(&branch.id, &session)?;
+            // Возвращаем актуальное состояние: ветка стала текущей.
+            branch.is_current = true;
+            self.audit(actor, "session.switch_branch", &session.id);
+        }
+        Ok((session, branch))
     }
 
     // ── Старт ──
@@ -151,6 +315,8 @@ impl SessionService {
         let partner_msg = SessionMessage {
             id: uuid::Uuid::new_v4().to_string(),
             session_id: session.id.clone(),
+            // Opening принадлежит main-ветке (id ветки = id сессии).
+            branch_id: Some(session.id.clone()),
             turn_index: 0,
             role: MessageRole::Partner,
             content: opening.clone(),
@@ -212,6 +378,8 @@ impl SessionService {
             .get(&session.scenario_id)?
             .ok_or_else(|| AppError::NotFound("сценарий сессии не найден".into()))?;
 
+        // Ход идёт в текущую ветку; её снапшот обновляем вместе с сессией.
+        let mut branch = self.current_branch(&session.id)?;
         let history = self.repos.sessions.messages(session_id)?;
 
         // 1) Ответ собеседника (LLM) — до записи в БД.
@@ -228,11 +396,15 @@ impl SessionService {
         session.turn_count += 1;
         let total_score = session.total_score;
         debug_assert_eq!(total_score, score_before + score_delta);
+        branch.metrics = session.metrics.clone();
+        branch.total_score = session.total_score;
+        branch.turn_count = session.turn_count;
 
         let now = chrono::Utc::now().to_rfc3339();
         let player_msg = SessionMessage {
             id: uuid::Uuid::new_v4().to_string(),
             session_id: session.id.clone(),
+            branch_id: Some(branch.id.clone()),
             turn_index: (history.len() as u32).max(1),
             role: MessageRole::Player,
             content: player_text.to_string(),
@@ -243,6 +415,7 @@ impl SessionService {
         let partner_msg = SessionMessage {
             id: uuid::Uuid::new_v4().to_string(),
             session_id: session.id.clone(),
+            branch_id: Some(branch.id.clone()),
             turn_index: player_msg.turn_index + 1,
             role: MessageRole::Partner,
             content: partner_reply.clone(),
@@ -251,11 +424,11 @@ impl SessionService {
             created_at: now,
         };
 
-        // Счёт + 2 реплики + UPDATE сессии — одна транзакция:
+        // Счёт + 2 реплики + UPDATE сессии и ветки — одна транзакция:
         // иначе при сбое середины ход «повисит» (счёт без сообщений или наоборот).
         self.repos
             .sessions
-            .commit_turn(&session, &player_msg, Some(&partner_msg))?;
+            .commit_turn(&session, &branch, &player_msg, Some(&partner_msg))?;
 
         Ok(TurnOutcome {
             session,
@@ -295,6 +468,7 @@ impl SessionService {
             )));
         }
 
+        let mut branch = self.current_branch(&session.id)?;
         let analysis = analysis::analyze(player_text);
         let score_before = session.total_score;
         let score_delta = scoring::apply_analysis(&mut session.metrics, &analysis);
@@ -302,11 +476,15 @@ impl SessionService {
         session.turn_count += 1;
         let total_score = session.total_score;
         debug_assert_eq!(total_score, score_before + score_delta);
+        branch.metrics = session.metrics.clone();
+        branch.total_score = session.total_score;
+        branch.turn_count = session.turn_count;
 
         let history_len = self.repos.sessions.messages(session_id)?.len();
         let msg = SessionMessage {
             id: uuid::Uuid::new_v4().to_string(),
             session_id: session.id.clone(),
+            branch_id: Some(branch.id.clone()),
             turn_index: (history_len as u32).max(1),
             role: MessageRole::Player,
             content: player_text.to_string(),
@@ -314,7 +492,9 @@ impl SessionService {
             score_delta,
             created_at: chrono::Utc::now().to_rfc3339(),
         };
-        self.repos.sessions.commit_turn(&session, &msg, None)?;
+        self.repos
+            .sessions
+            .commit_turn(&session, &branch, &msg, None)?;
 
         Ok(TurnOutcome {
             session,
@@ -463,7 +643,8 @@ impl SessionService {
 
         let request = ChatRequest::new(model_key, messages)
             .with_temperature(0.7)
-            .with_max_tokens(400);
+            // Запас под русские реплики; reasoning-модели съедали 400 на «thinking».
+            .with_max_tokens(1024);
         let response = chat.chat(request).await?;
         // Провайдер может не вернуть usage — оцениваем ответ по длине (~4 chars/token).
         let tokens = response
@@ -475,10 +656,13 @@ impl SessionService {
 
         let content = response.content.trim().to_string();
         if content.is_empty() {
-            return Err(AppError::upstream(
-                "LLM",
-                "пустой ответ собеседника, попробуйте ещё раз",
-            ));
+            // Частая причина у reasoning-моделей: весь max_tokens ушёл в thinking.
+            let hint = if response.finish_reason.as_deref() == Some("length") {
+                "ответ пуст: модель не уложилась в лимит токенов (возможно, reasoning-модель)"
+            } else {
+                "пустой ответ собеседника, попробуйте ещё раз"
+            };
+            return Err(AppError::upstream("LLM", hint));
         }
         Ok(content)
     }
@@ -488,6 +672,24 @@ impl SessionService {
             .sessions
             .get(session_id)?
             .ok_or_else(|| AppError::NotFound("сессия не найдена".into()))
+    }
+
+    /// Текущая ветка сессии; отсутствие — нарушение инварианта
+    /// (ветка создаётся вместе с сессией, бэкфилл — миграцией 0011).
+    fn current_branch(&self, session_id: &str) -> AppResult<SessionBranch> {
+        self.repos
+            .sessions
+            .current_branch(session_id)?
+            .ok_or_else(|| AppError::internal(format!("у сессии {session_id} нет текущей ветки")))
+    }
+
+    /// Ветка, принадлежащая конкретной сессии; иначе 404.
+    fn load_branch_for(&self, session: &Session, branch_id: &str) -> AppResult<SessionBranch> {
+        self.repos
+            .sessions
+            .branch(branch_id)?
+            .filter(|b| b.session_id == session.id)
+            .ok_or_else(|| AppError::NotFound("ветка не найдена".into()))
     }
 
     fn ensure_owner(&self, actor: &AuthContext, session: &Session) -> AppResult<()> {
@@ -544,12 +746,18 @@ fn system_prompt(scenario: &Scenario) -> String {
             scenario.partner_goals.join("; ")
         ));
     }
-    p.push_str(&format!("Твоя BATNA: {}.\n", scenario.partner_batna));
+    p.push_str(&format!(
+        "Твоя лучшая альтернатива (BATNA): {}.\n",
+        scenario.partner_batna
+    ));
     p.push_str(&format!(
         "Цель игрока (не называй её вслух, но учитывай): {}.\n",
         scenario.player_goal
     ));
-    p.push_str(&format!("BATNA игрока: {}\n", scenario.player_batna));
+    p.push_str(&format!(
+        "Лучшая альтернатива игрока (BATNA): {}\n",
+        scenario.player_batna
+    ));
     p.push_str(&format!(
         "Сложность сценария: {} ({}).\n",
         scenario.difficulty.title(),
@@ -667,7 +875,10 @@ mod tests {
         assert_eq!(started.session.status, SessionStatus::Active);
         assert_eq!(started.opening, "Добрый день, обсудим условия?");
 
-        let msgs = svc.sessions.messages(&user, &started.session.id).unwrap();
+        let msgs = svc
+            .sessions
+            .messages(&user, &started.session.id, None)
+            .unwrap();
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].role, MessageRole::Partner);
         assert_eq!(msgs[0].turn_index, 0);
@@ -705,7 +916,10 @@ mod tests {
         assert_eq!(outcome.total_score, outcome.session.total_score);
         assert!(outcome.session.metrics.collaboration_count >= 1);
 
-        let msgs = svc.sessions.messages(&user, &started.session.id).unwrap();
+        let msgs = svc
+            .sessions
+            .messages(&user, &started.session.id, None)
+            .unwrap();
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[1].role, MessageRole::Player);
         assert_eq!(msgs[1].strategy.as_deref(), Some("collaboration"));
@@ -956,6 +1170,344 @@ mod tests {
         svc.sessions.ensure_llm_quota(&user.user_id, 101).unwrap();
         // Ноль — квота выключена, всегда можно.
         svc.sessions.ensure_llm_quota(&user.user_id, 0).unwrap();
+    }
+
+    // ── Ветвление диалога ──
+
+    /// Добавляет partner-реплику в текущую ветку (тесты идут без LLM).
+    fn append_partner(
+        svc: &crate::application::Services,
+        session_id: &str,
+        turn_index: u32,
+        content: &str,
+    ) -> String {
+        let branch = svc
+            .repos
+            .sessions
+            .current_branch(session_id)
+            .unwrap()
+            .unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        svc.repos
+            .sessions
+            .append_message(&SessionMessage {
+                id: id.clone(),
+                session_id: session_id.to_string(),
+                branch_id: Some(branch.id),
+                turn_index,
+                role: MessageRole::Partner,
+                content: content.to_string(),
+                strategy: None,
+                score_delta: 0,
+                created_at: chrono::Utc::now().to_rfc3339(),
+            })
+            .unwrap();
+        id
+    }
+
+    const POSITIVE_REPLY: &str = "Какие условия поставки для вас оптимальны? \
+        Давайте найдём решение, выгодное для обеих сторон. \
+        По данным рынка скидка 10% обоснована.";
+
+    #[test]
+    fn fork_copies_prefix_and_becomes_current_branch() {
+        let (_db, svc) = setup().unwrap();
+        let sc_id = seed_scenario(&svc);
+        let user = user_ctx(&svc);
+        let started = svc
+            .sessions
+            .start(&user, &sc_id, SessionMode::Text)
+            .unwrap();
+        let sid = started.session.id;
+
+        svc.sessions
+            .record_player_turn(&user, &sid, POSITIVE_REPLY)
+            .unwrap();
+        let partner_id = append_partner(&svc, &sid, 2, "Обсудим условия.");
+
+        let created = svc
+            .sessions
+            .create_branch(&user, &sid, &partner_id)
+            .unwrap();
+
+        // Новая ветка: форк от main (id main = id сессии), стала текущей.
+        assert_eq!(created.branch.label, "fork");
+        assert!(created.branch.is_current);
+        assert_eq!(created.branch.parent_id.as_deref(), Some(sid.as_str()));
+        assert_eq!(created.branch.fork_turn_index, 2);
+
+        // Префикс скопирован: opening + player + partner.
+        let msgs = svc.sessions.messages(&user, &sid, None).unwrap();
+        assert_eq!(msgs.len(), 3, "префикс из 3 реплик");
+        assert!(msgs
+            .iter()
+            .all(|m| m.branch_id.as_deref() == Some(created.branch.id.as_str())));
+
+        // Дерево: main + fork, current — форк.
+        let branches = svc.sessions.branches(&user, &sid).unwrap();
+        assert_eq!(branches.len(), 2);
+        assert!(!branches[0].is_current, "main больше не текущая");
+        let current = svc.repos.sessions.current_branch(&sid).unwrap().unwrap();
+        assert_eq!(current.id, created.branch.id);
+
+        // Сессия откатилась к точке ветвления: 1 ход.
+        assert_eq!(created.session.turn_count, 1);
+    }
+
+    #[test]
+    fn fork_replays_metrics_to_point_and_switch_restores() {
+        let (_db, svc) = setup().unwrap();
+        let sc_id = seed_scenario(&svc);
+        let user = user_ctx(&svc);
+        let sid = svc
+            .sessions
+            .start(&user, &sc_id, SessionMode::Text)
+            .unwrap()
+            .session
+            .id;
+
+        // Ход 1 → partner1 → ход 2: в main 2 хода, счёт растёт.
+        svc.sessions
+            .record_player_turn(&user, &sid, POSITIVE_REPLY)
+            .unwrap();
+        let partner1 = append_partner(&svc, &sid, 2, "Обсудим условия.");
+        svc.sessions
+            .record_player_turn(&user, &sid, POSITIVE_REPLY)
+            .unwrap();
+        let score_two_turns = svc.sessions.get(&user, &sid).unwrap().total_score;
+        assert_eq!(svc.sessions.get(&user, &sid).unwrap().turn_count, 2);
+        assert!(score_two_turns > 0);
+
+        // Форк после partner1 (1 ход) — метрики пересчитаны в этой точке.
+        let created = svc.sessions.create_branch(&user, &sid, &partner1).unwrap();
+        assert_eq!(created.session.turn_count, 1, "откат к 1 ходу");
+        assert_eq!(created.session.total_score, created.branch.total_score);
+        assert!(
+            created.session.total_score < score_two_turns,
+            "счёт откатился: {} < {score_two_turns}",
+            created.session.total_score
+        );
+
+        // Main сохранила своё состояние (2 хода).
+        let branches = svc.sessions.branches(&user, &sid).unwrap();
+        let main = &branches[0];
+        assert_eq!(main.turn_count, 2);
+        assert_eq!(main.total_score, score_two_turns);
+
+        // Переключение обратно восстанавливает снапшот main.
+        let (restored, _) = svc.sessions.switch_branch(&user, &sid, &main.id).unwrap();
+        assert_eq!(restored.turn_count, 2);
+        assert_eq!(restored.total_score, score_two_turns);
+        // Ходы после переключения идут в main (4 реплики нетронуты).
+        assert_eq!(svc.sessions.messages(&user, &sid, None).unwrap().len(), 4);
+    }
+
+    #[test]
+    fn fork_from_player_message_is_rejected() {
+        let (_db, svc) = setup().unwrap();
+        let sc_id = seed_scenario(&svc);
+        let user = user_ctx(&svc);
+        let sid = svc
+            .sessions
+            .start(&user, &sc_id, SessionMode::Text)
+            .unwrap()
+            .session
+            .id;
+        svc.sessions
+            .record_player_turn(&user, &sid, POSITIVE_REPLY)
+            .unwrap();
+
+        let player_msg = svc
+            .sessions
+            .messages(&user, &sid, None)
+            .unwrap()
+            .into_iter()
+            .find(|m| m.role == MessageRole::Player)
+            .unwrap();
+        let err = svc
+            .sessions
+            .create_branch(&user, &sid, &player_msg.id)
+            .unwrap_err();
+        assert!(
+            matches!(err, AppError::BadRequest(_)),
+            "форк от реплики игрока должен отклоняться: {err}"
+        );
+    }
+
+    #[test]
+    fn fork_restricted_to_active_session_and_owner() {
+        let (_db, svc) = setup().unwrap();
+        let sc_id = seed_scenario(&svc);
+        let user = user_ctx(&svc);
+        let sid = svc
+            .sessions
+            .start(&user, &sc_id, SessionMode::Text)
+            .unwrap()
+            .session
+            .id;
+        let opening_id = svc.sessions.messages(&user, &sid, None).unwrap()[0]
+            .id
+            .clone();
+
+        // Чужой пользователь — не может ветвить.
+        let stranger = svc
+            .repos
+            .users
+            .create("stranger", "hash", UserRole::User, None)
+            .unwrap();
+        let stranger_ctx = AuthContext {
+            user_id: stranger.id,
+            login: "stranger".into(),
+            role: UserRole::User,
+        };
+        let err = svc
+            .sessions
+            .create_branch(&stranger_ctx, &sid, &opening_id)
+            .unwrap_err();
+        assert!(matches!(err, AppError::Forbidden(_)), "{err}");
+
+        // Админ читает чужие сессии, но не ветвит (strict owner).
+        let admin = ctx("admin-1", UserRole::Admin);
+        assert!(svc.sessions.branches(&admin, &sid).is_ok());
+        let err = svc
+            .sessions
+            .create_branch(&admin, &sid, &opening_id)
+            .unwrap_err();
+        assert!(matches!(err, AppError::Forbidden(_)), "{err}");
+
+        // Завершённая сессия — ветвление и переключение запрещены.
+        svc.sessions.finish(&user, &sid).unwrap();
+        let err = svc
+            .sessions
+            .create_branch(&user, &sid, &opening_id)
+            .unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)), "{err}");
+
+        let branches = svc.sessions.branches(&user, &sid).unwrap();
+        let err = svc
+            .sessions
+            .switch_branch(&user, &sid, &branches[0].id)
+            .unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)), "{err}");
+    }
+
+    #[test]
+    fn fork_unknown_message_or_branch_is_not_found() {
+        let (_db, svc) = setup().unwrap();
+        let sc_id = seed_scenario(&svc);
+        let user = user_ctx(&svc);
+        let sid = svc
+            .sessions
+            .start(&user, &sc_id, SessionMode::Text)
+            .unwrap()
+            .session
+            .id;
+
+        let err = svc
+            .sessions
+            .create_branch(&user, &sid, "no-such-message")
+            .unwrap_err();
+        assert!(matches!(err, AppError::NotFound(_)), "{err}");
+
+        // Реплика чужой сессии не подходит (filter по session_id).
+        let other = svc
+            .sessions
+            .start(&user, &sc_id, SessionMode::Text)
+            .unwrap()
+            .session;
+        let other_opening = svc.sessions.messages(&user, &other.id, None).unwrap()[0]
+            .id
+            .clone();
+        let err = svc
+            .sessions
+            .create_branch(&user, &sid, &other_opening)
+            .unwrap_err();
+        assert!(matches!(err, AppError::NotFound(_)), "{err}");
+
+        // Читаем несуществующую ветку → 404.
+        let err = svc
+            .sessions
+            .messages(&user, &sid, Some("no-such-branch"))
+            .unwrap_err();
+        assert!(matches!(err, AppError::NotFound(_)), "{err}");
+    }
+
+    #[test]
+    fn fork_limit_is_enforced() {
+        let (_db, svc) = setup().unwrap();
+        let sc_id = seed_scenario(&svc);
+        let user = user_ctx(&svc);
+        let sid = svc
+            .sessions
+            .start(&user, &sc_id, SessionMode::Text)
+            .unwrap()
+            .session
+            .id;
+        let opening_id = svc.sessions.messages(&user, &sid, None).unwrap()[0]
+            .id
+            .clone();
+
+        // 1 main + (MAX_BRANCHES - 1) форков от opening.
+        for i in 0..(MAX_BRANCHES - 1) {
+            let created = svc
+                .sessions
+                .create_branch(&user, &sid, &opening_id)
+                .unwrap_or_else(|e| panic!("форк #{i} должен пройти: {e}"));
+            assert!(created.branch.is_current);
+        }
+        assert_eq!(
+            svc.sessions.branches(&user, &sid).unwrap().len() as u64,
+            MAX_BRANCHES
+        );
+
+        // Следующий форк — отказ по лимиту.
+        let err = svc
+            .sessions
+            .create_branch(&user, &sid, &opening_id)
+            .unwrap_err();
+        assert!(matches!(err, AppError::BadRequest(_)), "{err}");
+    }
+
+    #[test]
+    fn messages_by_branch_are_isolated() {
+        let (_db, svc) = setup().unwrap();
+        let sc_id = seed_scenario(&svc);
+        let user = user_ctx(&svc);
+        let sid = svc
+            .sessions
+            .start(&user, &sc_id, SessionMode::Text)
+            .unwrap()
+            .session
+            .id;
+        let main_id = sid.clone();
+        let opening_id = svc.sessions.messages(&user, &sid, None).unwrap()[0]
+            .id
+            .clone();
+
+        svc.sessions
+            .record_player_turn(&user, &sid, POSITIVE_REPLY)
+            .unwrap();
+        let created = svc
+            .sessions
+            .create_branch(&user, &sid, &opening_id)
+            .unwrap();
+
+        // Текущая (fork): opening-копия, 1 реплика.
+        let fork_msgs = svc.sessions.messages(&user, &sid, None).unwrap();
+        assert_eq!(fork_msgs.len(), 1);
+        assert_ne!(fork_msgs[0].id, opening_id, "копия с новым id");
+
+        // main осталась с двумя репликами.
+        let main_msgs = svc.sessions.messages(&user, &sid, Some(&main_id)).unwrap();
+        assert_eq!(main_msgs.len(), 2);
+        assert_eq!(main_msgs[0].id, opening_id);
+
+        // Явный запрос ветки форка — тот же набор.
+        let same = svc
+            .sessions
+            .messages(&user, &sid, Some(&created.branch.id))
+            .unwrap();
+        assert_eq!(same.len(), 1);
     }
 
     #[test]

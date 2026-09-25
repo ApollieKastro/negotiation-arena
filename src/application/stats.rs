@@ -290,7 +290,9 @@ mod tests {
             .sessions
             .append_message(&SessionMessage {
                 id: uuid::Uuid::new_v4().to_string(),
-                session_id: sid,
+                session_id: sid.clone(),
+                // Реплика в main-ветке (id ветки = id сессии).
+                branch_id: Some(sid),
                 turn_index: 0,
                 role: MessageRole::Partner,
                 content: "hi".into(),

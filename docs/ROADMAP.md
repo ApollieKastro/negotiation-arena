@@ -15,7 +15,7 @@
 | Провайдеры | Любые: OpenAI-совместимые, Anthropic, Gemini, локальные whisper/Piper, ElevenLabs/Deepgram и т.д. |
 | Роли моделей | 1) LLM (голова диалога) 2) STT 3) TTS |
 | API-ключи | Шифрование AES-256-GCM, мастер-ключ из env |
-| Сценарий | Стартовый контекст диалога (кто ты, кто собеседник, компания, цель, BATNA) |
+| Сценарий | Стартовый контекст диалога (кто ты, кто собеседник, компания, цель, лучшая альтернатива без сделки = BATNA) |
 | Обычные настройки | Тема, шрифт, размер текста, язык, выбор только разрешённых админом моделей |
 | Порядок | Бэкенд → админка → UI |
 
@@ -53,7 +53,7 @@
 ### Этап 2. Провайдеры ИИ — `[x]` выполнен
 - [x] Адаптеры: OpenAI-совместимый (chat/stt/tts)
 - [x] Адаптеры: Anthropic, Google Gemini
-- [~] Локальные: whisper.cpp/faster-whisper (STT), Piper/Silero (TTS) — *каталог и менеджер готовы, запуск бинарников на этапе 7*
+- [~] Локальные: whisper.cpp/faster-whisper (STT), Piper/Silero (TTS) — *каталог/менеджер + local_voice subprocess (local_stt/local_tts) в проде; deps через requirements-voice*
 - [x] Облачные STT/TTS: OpenAI, Groq, ElevenLabs, Deepgram
 - [x] Discovery моделей по API-ключу, тест соединения
 - [x] Шифрование ключей, маскирование в UI
@@ -98,6 +98,8 @@
 - [x] STT/TTS через выбранные провайдеры — `VoiceService`, `POST /api/v1/voice/{tts,stt}` (multipart, limit 14 МБ)
 - [x] Голосовой ввод/вывод на странице диалога (session.js)
 - [x] Ошибки «не настроено» → 503 с человекочитаемым сообщением; маппинг `voice_unconfigured`/`unconfigured`
+- [x] Локальный STT/TTS runtime: `local_voice` + `scripts/local_{stt,tts}.py` (transformers/nemo-speech/faster-whisper/Piper), фабрика Local → stt+tts+catalog
+- [x] Скачивание локальных моделей URL + HuggingFace: `GET/POST/DELETE /api/v1/local-models*`, рекурсивный list, streaming download, UI «Локальные файлы»
 - [ ] Стриминг, fallback по голосовым провайдерам — *deferred, не критично для MVP*
 
 ### Этап 8. Hardening — `[~]` частично
@@ -128,7 +130,7 @@
 |---|--------|--------|
 | 1 | Презентация | `[ ]` — на пользователя |
 | 2 | Документация | `[x]` `docs/DOCUMENTATION.md` + README/ROADMAP |
-| 3 | Ветвление диалога | `[ ]` — на пользователя |
+| 3 | Ветвление диалога | `[x]` — дерево веток в сессии (форк/переключение, снапшот метрик), см. журнал 2026-09-25 |
 | 4 | Fallback без LLM (mock) | `[x]` ProviderKind::Mock + сид demo-mock-llm |
 | 5 | Сложность в runtime | `[x]` system_prompt easy/medium/hard |
 | 6 | Продуктовая концепция | `[x]` `docs/CONCEPT.md` |
@@ -158,3 +160,7 @@
 | 2026-09-23 | 8 (deferred stage 3–4) | Закрыты deferred из ревью: **session-транзакции** (`SessionRepository::create_with_opening` / `commit_turn` — start и turn одной транзакцией); **пагинация** истории (`GET /sessions?limit=&offset=` → `{items,total,limit,offset}` + UI-пейджер); **FK-mapping** (FK/UNIQUE → отдельные 409); **spawn_blocking** для admin `POST /users`; **LLM-quota** — дневной лимит токенов на пользователя `platform.llm_daily_token_limit` (0=off), таблица `llm_daily_usage` (миграция 0009), 429 при исчерпании в ходе диалога и генерации сценариев, учёт usage всегда. unit/HTTP-тесты; **весь deferred stage 3–4 закрыт**. Тесты зелёные, clippy `-D warnings` ✅ |
 | 2026-09-23 | хакатон 4–5–7–9–6–2 | **Mock LLM** (ProviderKind::Mock, mock.rs, сид demo-mock-llm, флаг platform.demo_llm_assigned, тест 201 generate); **сложность в system_prompt**; **прогрессия** (progress.rs, XP/level в stats/leaderboard, UI); **i18n ru/en** (i18n.js, shell+player pages, locale-changed, settings language); **feedback EN** (build_report locale из settings); **docs/CONCEPT.md + DOCUMENTATION.md**, README/ROADMAP |
 | 2026-09-23 | хакатон (ollama/team) | **Keyless OpenAI-compat** (`Provider::requires_api_key` — local base_url без ключа) + **сид Ollama** (`OLLAMA_BASE_URL`/`OLLAMA_MODEL`/`OLLAMA_SEED_ASSIGN`, env в `.env.example`, README); **страница «О команде»** `#/settings/team` (`team.js`, i18n, меню), логотипы `static/team-logo*.png` + favicon, brand-mark → `team-logo-mark` |
+| 2026-09-23 | локальные модели | **Local models**: recursive list/`guess_role` (nemotron/asr→stt), streaming URL download + HF (`download_hf`/`hf download`), API `GET|DELETE /local-models` + `POST /local-models/download`, `LocalSpeechToText`/`LocalTextToSpeech` → `scripts/local_{stt,tts}.py` + `requirements-voice.txt`, factory Local stt/tts, UI tab «Локальные файлы», matches_role asr/nemotron, HTTP unit-тесты |
+| 2026-09-23 | гайд моделей | **docs/MODELS_GUIDE.md** — выбор LLM/STT/TTS, где взять API-ключи (OpenAI/Groq/OpenRouter/Anthropic/Gemini/Ollama/ElevenLabs/Deepgram), локальные Nemotron/Piper/Whisper, чек-лист и шпаргалка; UI: таб **«Гайд»** в админке (Провайдеры), сворачиваемый блок «Что за модели и как выбрать?» в настройках игрока + i18n ru/en; ссылки из README |
+| 2026-09-23 | поиск моделей + BATNA | **Поиск моделей**: discovery-результаты, таб «Модели» (имя/ключ + провайдер + счётчик), «Локальные файлы», назначения ролей (select при >4), настройки игрока (опции при >4); helper `matchModelQuery`/`searchModelsInput`. **BATNA**: расшифровка в i18n `scenarios.batnaHint` (ru/en), подсказки в модалке сценария, сессии (вкл. вкладку собеседника), hint в админ-форме; определение в CONCEPT/DOCUMENTATION/ROADMAP |
+| 2026-09-25 | хакатон 3 | **Ветвление диалога**: миграция `0011_session_branches` (таблица веток + `session_messages.branch_id`, main-ветка `id = session.id`, UNIQUE-индекс «одна current на сессию», бэкфилл старых данных); домен `SessionBranch`; репо `branches/branch/current_branch/messages_in_branch/fork_branch/switch_branch` (форк и переключение — транзакции, ход обновляет снапшот ветки); сервис `create_branch` (префикс-копия ≤ точка ветвления + `replay_metrics` — детерминированный откат метрик) / `switch_branch` / `messages(?branch_id=)`, ограничения: active-сессия, только partner-реплика, ≤16 веток, strict owner; API `GET|POST /sessions/:id/branches`, `PUT /branches/:branch_id`; UI: панель-чипы веток + кнопка 🔀 на репликах собеседника (`session.js`, i18n ru/en, `chat.js` → `dataset.msgId`); тесты: 7 unit + HTTP-flow (изоляция веток, 400/403/404), всего **244 зелёные**, clippy/fmt чисто; дым на реальной БД: бэкфилл 22 сессии/82 реплики → 0 NULL, живой curl-flow fork/switch подтверждён; **Playwright UI-смоук**: логин → форк от opening → ход в ветке → переключение на основную → изоляция подтверждена, скриншоты в `/tmp/opencode/shots/` |

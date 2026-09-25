@@ -1,6 +1,7 @@
 // Переиспользуемые UI-компоненты: toast, modal, field, table и др.
 
 import { h, escapeHtml } from './dom.js';
+import { fetchAvatarUrl } from './avatars.js';
 
 const TOAST_ICONS = { info: 'ℹ', success: '✓', error: '✕', warning: '!' };
 
@@ -313,7 +314,7 @@ export function tabs({ items = [], active, onChange, variant = '' } = {}) {
   return el;
 }
 
-/** Аватар юзера: avatar(user, 'sm') — img или инициалы */
+/** Аватар юзера: avatar(user, 'sm') — картинка (has_avatar) или инициалы */
 export function avatar(u, size = '') {
   const cls = size === 'sm' ? 'avatar avatar-sm' : size === 'lg' ? 'avatar avatar-lg' : 'avatar';
   const name = (u && (u.display_name || u.login)) || '?';
@@ -323,9 +324,38 @@ export function avatar(u, size = '') {
     .map((p) => p[0])
     .join('')
     .toUpperCase();
-  return h('span', {
+  const el = h('span', {
     class: `${cls} avatar-initials`,
     title: name,
     text: initials,
   });
+
+  if (u && u.has_avatar && u.id) {
+    fetchAvatarUrl(u.id).then((url) => {
+      // Страница могла успеть перерисоваться — не трогаем оторванный узел.
+      if (!url || !el.isConnected) return;
+      el.replaceChildren(
+        h('img.avatar-img', { src: url, alt: '', decoding: 'async' })
+      );
+      el.classList.remove('avatar-initials');
+      el.classList.add('has-image');
+    });
+  }
+  return el;
+}
+
+/**
+ * Секция-карточка на странице настроек/профиля:
+ * sectionCard('Заголовок', 'Описание', ...children).
+ */
+export function sectionCard(title, description, ...children) {
+  return h('div.card.mt-4', null,
+    h('div.card-body.stack', { style: { gap: 'var(--sp-4)' } },
+      h('div.stack', { style: { gap: '2px' } },
+        h('div.card-title', { text: title }),
+        description ? h('div.small.muted', { text: description }) : null
+      ),
+      ...children
+    )
+  );
 }

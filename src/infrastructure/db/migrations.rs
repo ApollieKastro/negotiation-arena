@@ -60,6 +60,16 @@ const MIGRATIONS: &[Migration] = &[
         name: "llm_daily_usage",
         sql: include_str!("migrations/0009_llm_daily_usage.sql"),
     },
+    Migration {
+        version: 10,
+        name: "user_profile",
+        sql: include_str!("migrations/0010_user_profile.sql"),
+    },
+    Migration {
+        version: 11,
+        name: "session_branches",
+        sql: include_str!("migrations/0011_session_branches.sql"),
+    },
 ];
 
 /// Общее число известных миграций (для тестов).

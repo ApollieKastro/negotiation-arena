@@ -420,6 +420,141 @@ impl AuthService {
             .ok_or_else(|| AppError::NotFound("пользователь не найден".into()))
     }
 
+    // ── Свой профиль (self-service: ManageOwnSettings) ──
+
+    /// Свежий профиль текущего пользователя.
+    pub fn own_profile(&self, actor: &AuthContext) -> AppResult<User> {
+        actor.require(Permission::ManageOwnSettings)?;
+        self.repos
+            .users
+            .by_id(&actor.user_id)?
+            .ok_or_else(|| AppError::Unauthorized("пользователь не найден".into()))
+    }
+
+    /// Смена логина и/или отображаемого имени самим пользователем.
+    ///
+    /// * логин нормализуется как при регистрации, занятый → `409`;
+    /// * `display_name`: `Some(Some(s))` — записать, `Some(None)` — очистить,
+    ///   `None` — не трогать (двойной `Option` в запросе PATCH);
+    /// * JWT не переиздаётся: контекст запроса перечитывает логин из БД.
+    pub fn update_own_profile(
+        &self,
+        actor: &AuthContext,
+        login: &str,
+        display_name: Option<Option<&str>>,
+    ) -> AppResult<User> {
+        actor.require(Permission::ManageOwnSettings)?;
+        let login = normalize_login(login)?;
+
+        let current = self.own_profile(actor)?;
+        if login != current.login && self.repos.users.by_login(&login)?.is_some() {
+            return Err(AppError::Conflict(
+                "пользователь с таким логином уже есть".into(),
+            ));
+        }
+
+        let display_name = match display_name {
+            None => current.display_name.clone(),
+            Some(None) => None,
+            Some(Some(raw)) => Some(normalize_display_name(raw)?),
+        };
+
+        self.repos
+            .users
+            .update_profile(&actor.user_id, &login, display_name.as_deref())?;
+        self.audit(
+            Some(&actor.user_id),
+            "profile.update",
+            Some("user"),
+            Some(&actor.user_id),
+            Some(&format!("login: {} → {login}", current.login)),
+        );
+        self.own_profile(actor)
+    }
+
+    /// Смена собственного пароля: текущий пароль обязателен.
+    ///
+    /// Argon2 синхронный — вызывающий (хендлер) уводит в `spawn_blocking`.
+    pub fn change_own_password(
+        &self,
+        actor: &AuthContext,
+        current_password: &str,
+        new_password: &str,
+    ) -> AppResult<()> {
+        actor.require(Permission::ManageOwnSettings)?;
+        validate_password(new_password)?;
+        if current_password == new_password {
+            return Err(AppError::BadRequest(
+                "новый пароль совпадает с текущим".into(),
+            ));
+        }
+
+        let with_secret = self
+            .repos
+            .users
+            .by_id_with_secret(&actor.user_id)?
+            .ok_or_else(|| AppError::Unauthorized("пользователь не найден".into()))?;
+        if !verify_password(current_password, &with_secret.password_hash) {
+            self.audit(
+                Some(&actor.user_id),
+                "profile.password_failed",
+                None,
+                None,
+                None,
+            );
+            return Err(AppError::BadRequest("неверный текущий пароль".into()));
+        }
+
+        let hash = hash_password(new_password);
+        self.repos.users.update_password(&actor.user_id, &hash)?;
+        self.audit(
+            Some(&actor.user_id),
+            "profile.password_changed",
+            Some("user"),
+            Some(&actor.user_id),
+            None,
+        );
+        Ok(())
+    }
+
+    /// Загрузка/замена аватара: валидация — доменный сервис [`validate_avatar`].
+    pub fn set_own_avatar(&self, actor: &AuthContext, mime: &str, data: &[u8]) -> AppResult<User> {
+        actor.require(Permission::ManageOwnSettings)?;
+        let image = crate::domain::services::avatar::validate_avatar(mime, data)?;
+        self.repos
+            .users
+            .set_avatar(&actor.user_id, image.mime, &image.data)?;
+        self.audit(
+            Some(&actor.user_id),
+            "profile.avatar_updated",
+            Some("user"),
+            Some(&actor.user_id),
+            Some(image.mime),
+        );
+        self.own_profile(actor)
+    }
+
+    /// Удаление аватара (возврат к инициалам).
+    pub fn clear_own_avatar(&self, actor: &AuthContext) -> AppResult<User> {
+        actor.require(Permission::ManageOwnSettings)?;
+        self.repos.users.clear_avatar(&actor.user_id)?;
+        self.audit(
+            Some(&actor.user_id),
+            "profile.avatar_cleared",
+            Some("user"),
+            Some(&actor.user_id),
+            None,
+        );
+        self.own_profile(actor)
+    }
+
+    /// Байты аватара пользователя — для любого авторизованного (шапка,
+    /// лидерборд). Прав не проверяем: сам факт входа уже достаточен,
+    /// аватар не считает секретом; `None` — аватара нет.
+    pub fn get_avatar(&self, user_id: &str) -> AppResult<Option<(String, Vec<u8>)>> {
+        self.repos.users.avatar(user_id)
+    }
+
     // ── Внутреннее ──
 
     /// Фиксирует неудачный вход; при превышении лимита — аудит блокировки.
@@ -602,6 +737,17 @@ fn validate_password(password: &str) -> AppResult<()> {
         )));
     }
     Ok(())
+}
+
+/// Отображаемое имя: trim, пусто → пусто, максимум 64 символа.
+fn normalize_display_name(raw: &str) -> AppResult<String> {
+    let name = raw.trim();
+    if name.chars().count() > 64 {
+        return Err(AppError::BadRequest(
+            "отображаемое имя — не длиннее 64 символов".into(),
+        ));
+    }
+    Ok(name.to_string())
 }
 
 #[cfg(test)]
@@ -897,5 +1043,143 @@ mod tests {
 
         // Отключённый не входит.
         assert!(svc.auth.login("moderator", "secret1").is_err());
+    }
+
+    // ── Свой профиль: логин / пароль / аватар ──
+
+    #[test]
+    fn update_own_profile_changes_login_and_rejects_duplicate() {
+        let (_db, svc) = setup().unwrap();
+        svc.auth
+            .register("alice", "secret1", Some("Алиса"))
+            .unwrap();
+        svc.auth.register("bob", "secret1", None).unwrap();
+        let ctx = svc
+            .auth
+            .verify(&svc.auth.login("alice", "secret1").unwrap().token)
+            .unwrap();
+
+        let updated = svc
+            .auth
+            .update_own_profile(&ctx, "Alice_2", Some(Some("Алиса А.")))
+            .unwrap();
+        assert_eq!(updated.login, "alice_2");
+        assert_eq!(updated.display_name.as_deref(), Some("Алиса А."));
+
+        // Смена на занятый логин — конфликт.
+        let err = svc.auth.update_own_profile(&ctx, "bob", None).unwrap_err();
+        assert!(matches!(err, AppError::Conflict(_)), "{err}");
+
+        // None не трогает имя; Some(None) — очищает.
+        let kept = svc.auth.update_own_profile(&ctx, "alice_2", None).unwrap();
+        assert_eq!(kept.display_name.as_deref(), Some("Алиса А."));
+        let cleared = svc
+            .auth
+            .update_own_profile(&ctx, "alice_2", Some(None))
+            .unwrap();
+        assert!(cleared.display_name.is_none());
+
+        // Новый логин работает для входа, старый — нет.
+        assert!(svc.auth.login("alice_2", "secret1").is_ok());
+        assert!(svc.auth.login("alice", "secret1").is_err());
+    }
+
+    #[test]
+    fn update_own_profile_validates_login_and_display_name() {
+        let (_db, svc) = setup().unwrap();
+        svc.auth.register("carol", "secret1", None).unwrap();
+        let ctx = svc
+            .auth
+            .verify(&svc.auth.login("carol", "secret1").unwrap().token)
+            .unwrap();
+
+        assert!(svc.auth.update_own_profile(&ctx, "ab", None).is_err());
+        assert!(svc
+            .auth
+            .update_own_profile(&ctx, "bad login!", None)
+            .is_err());
+        let long = "я".repeat(65);
+        assert!(svc
+            .auth
+            .update_own_profile(&ctx, "carol", Some(Some(&long)))
+            .is_err());
+    }
+
+    #[test]
+    fn change_own_password_requires_current_and_blocks_reuse() {
+        let (_db, svc) = setup().unwrap();
+        svc.auth.register("dave", "secret1", None).unwrap();
+        let ctx = svc
+            .auth
+            .verify(&svc.auth.login("dave", "secret1").unwrap().token)
+            .unwrap();
+
+        // Не тот текущий пароль — отказ, хеш не меняется.
+        assert!(svc
+            .auth
+            .change_own_password(&ctx, "wrong-pw", "secret22")
+            .is_err());
+        assert!(svc.auth.login("dave", "secret1").is_ok());
+
+        // Новый короче минимума — отказ.
+        assert!(svc
+            .auth
+            .change_own_password(&ctx, "secret1", "12345")
+            .is_err());
+
+        // Совпадение с текущим — отказ.
+        assert!(svc
+            .auth
+            .change_own_password(&ctx, "secret1", "secret1")
+            .is_err());
+
+        // Успешная смена: старый пароль падает, новый — работает.
+        svc.auth
+            .change_own_password(&ctx, "secret1", "secret22")
+            .unwrap();
+        assert!(svc.auth.login("dave", "secret1").is_err());
+        assert!(svc.auth.login("dave", "secret22").is_ok());
+    }
+
+    #[test]
+    fn avatar_roundtrip_set_clear_and_rejects_garbage() {
+        let (_db, svc) = setup().unwrap();
+        svc.auth.register("erin", "secret1", None).unwrap();
+        let ctx = svc
+            .auth
+            .verify(&svc.auth.login("erin", "secret1").unwrap().token)
+            .unwrap();
+
+        assert!(!svc.auth.own_profile(&ctx).unwrap().has_avatar);
+        assert!(svc.auth.get_avatar(&ctx.user_id).unwrap().is_none());
+
+        let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        png.extend_from_slice(b"fake-png-body");
+
+        let user = svc.auth.set_own_avatar(&ctx, "image/png", &png).unwrap();
+        assert!(user.has_avatar);
+        let (mime, data) = svc.auth.get_avatar(&ctx.user_id).unwrap().unwrap();
+        assert_eq!(mime, "image/png");
+        assert_eq!(data, png);
+
+        // Ложный MIME и не-картинка — отказ, аватар не портится.
+        assert!(svc.auth.set_own_avatar(&ctx, "image/jpeg", &png).is_err());
+        assert!(svc
+            .auth
+            .set_own_avatar(&ctx, "image/png", b"<html>not image</html>")
+            .is_err());
+        assert!(svc.auth.get_avatar(&ctx.user_id).unwrap().is_some());
+
+        let cleared = svc.auth.clear_own_avatar(&ctx).unwrap();
+        assert!(!cleared.has_avatar);
+        assert!(svc.auth.get_avatar(&ctx.user_id).unwrap().is_none());
+    }
+
+    #[test]
+    fn profile_self_service_requires_authentication_context() {
+        // Роль user имеет ManageOwnSettings — проходит; проверка прав не «дырявая».
+        let user = ctx("u1", UserRole::User);
+        assert!(user.require(Permission::ManageOwnSettings).is_ok());
+        assert!(user.require(Permission::ManageUsers).is_err());
     }
 }

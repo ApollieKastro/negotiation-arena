@@ -1,0 +1,20 @@
+# Зависимости для локального STT/TTS (scripts/local_stt.py, local_tts.py).
+#
+# Установка:
+#   pip install -r scripts/requirements-voice.txt
+#
+# Nemotron ASR (nvidia/nemotron-3.5-asr-streaming-0.6b):
+#   torch + transformers (+ accelerate, soundfile).
+#   Альтернатива для .gguf/.nemo — nemo-speech CLI (см. HuggingFace model card).
+# Whisper (ggml/ct2): faster-whisper.
+# Piper (*.onnx голоса): piper-tts.
+#
+# GPU (CUDA) опционален; без него инференс идёт на CPU.
+
+torch
+transformers
+accelerate
+numpy
+soundfile
+faster-whisper
+piper-tts

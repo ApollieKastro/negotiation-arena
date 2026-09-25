@@ -206,6 +206,22 @@ async fn health_endpoints_return_ok() {
 }
 
 #[tokio::test]
+async fn models_guide_doc_is_served_under_docs() {
+    let app = TestApp::new();
+    // UI ссылается на /docs/MODELS_GUIDE.md — файл должен отдаваться, а не уходить в SPA-index.
+    let (status, body) = app.call("GET", "/docs/MODELS_GUIDE.md", None, None).await;
+    if std::path::Path::new("docs/MODELS_GUIDE.md").exists() {
+        assert_eq!(status, StatusCode::OK, "ожидали 200 для гайда: {status}");
+        assert!(
+            body["error"].is_null() || !body["error"].is_string(),
+            "гайд должен отдаваться как markdown, а не JSON-404/SPA: {body}"
+        );
+    } else {
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+}
+
+#[tokio::test]
 async fn unknown_route_returns_json_404_or_spa_index() {
     let app = TestApp::new();
     let (status, body) = app.call("GET", "/no/such/route", None, None).await;
@@ -621,6 +637,189 @@ async fn session_start_unknown_scenario_is_404() {
         )
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+// ── Ветвление диалога ──────────────────────────────────────────
+
+#[tokio::test]
+async fn session_branch_fork_switch_and_isolation_flow() {
+    let app = TestApp::new();
+    let token = app.user_token().await;
+
+    // Старт по сид-сценарию (mock LLM назначена сидом).
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v1/sessions",
+            Some(json!({ "scenario_id": "sales_easy" })),
+            Some(&token),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let sid = body["session"]["id"]
+        .as_str()
+        .expect("session.id")
+        .to_string();
+
+    // Два хода: mock-LLM отвечает, в main накапливаются реплики.
+    let turn_text = "Какие условия поставки для вас оптимальны? Давайте найдём решение, выгодное \
+         для обеих сторон. По данным рынка скидка 10% обоснована.";
+    for _ in 0..2 {
+        let (status, body) = app
+            .call(
+                "POST",
+                &format!("/api/v1/sessions/{sid}/turn"),
+                Some(json!({ "text": turn_text })),
+                Some(&token),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+
+    // История main: opening + 2×(player+partner) = 5 реплик.
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("/api/v1/sessions/{sid}/messages"),
+            None,
+            Some(&token),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let msgs = body.as_array().expect("messages").clone();
+    assert_eq!(msgs.len(), 5);
+
+    // Точка ветвления: partner-ответ после первого хода (turn_index == 2).
+    let partner1 = msgs
+        .iter()
+        .find(|m| m["role"] == "partner" && m["turn_index"] == 2)
+        .expect("partner1")["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Форк: префикс из 3 реплик, сессия откатывается к 1 ходу.
+    let (status, body) = app
+        .call(
+            "POST",
+            &format!("/api/v1/sessions/{sid}/branches"),
+            Some(json!({ "after_message_id": partner1 })),
+            Some(&token),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let fork_id = body["branch"]["id"]
+        .as_str()
+        .expect("branch.id")
+        .to_string();
+    assert_eq!(body["branch"]["label"], "fork");
+    assert_eq!(body["branch"]["is_current"], true);
+    assert_eq!(body["session"]["turn_count"], 1, "откат к первому ходу");
+    assert_eq!(
+        body["branch"]["parent_id"].as_str().expect("parent"),
+        sid.as_str(),
+        "parent — main-ветка (id = id сессии)"
+    );
+
+    // Дерево: main + fork.
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("/api/v1/sessions/{sid}/branches"),
+            None,
+            Some(&token),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let branches = body.as_array().expect("branches").clone();
+    assert_eq!(branches.len(), 2);
+    assert_eq!(branches[0]["label"], "main");
+    assert_eq!(branches[0]["is_current"], false);
+    let main_id = branches[0]["id"].as_str().unwrap().to_string();
+
+    // Изоляция веток: fork — 3 реплики (префикс-копии), main — 5.
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("/api/v1/sessions/{sid}/messages"),
+            None,
+            Some(&token),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body.as_array().unwrap().len(), 3, "current = fork");
+
+    let (status, body) = app
+        .call(
+            "GET",
+            &format!("/api/v1/sessions/{sid}/messages?branch_id={main_id}"),
+            None,
+            Some(&token),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body.as_array().unwrap().len(), 5, "main не тронута");
+
+    // Форк от реплики игрока → 400.
+    let player_id = msgs.iter().find(|m| m["role"] == "player").expect("player")["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (status, _) = app
+        .call(
+            "POST",
+            &format!("/api/v1/sessions/{sid}/branches"),
+            Some(json!({ "after_message_id": player_id })),
+            Some(&token),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Переключение обратно на main: сессия восстанавливает 2 хода.
+    let (status, body) = app
+        .call(
+            "PUT",
+            &format!("/api/v1/sessions/{sid}/branches/{main_id}"),
+            None,
+            Some(&token),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["session"]["turn_count"], 2);
+    assert_eq!(body["branch"]["is_current"], true);
+
+    // Несуществующая ветка → 404.
+    let (status, _) = app
+        .call(
+            "PUT",
+            &format!("/api/v1/sessions/{sid}/branches/no-such-branch"),
+            None,
+            Some(&token),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Админ читает чужое дерево, но не ветвит (strict owner).
+    let admin = app.admin_token().await;
+    let (status, _) = app
+        .call(
+            "GET",
+            &format!("/api/v1/sessions/{sid}/branches"),
+            None,
+            Some(&admin),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = app
+        .call(
+            "POST",
+            &format!("/api/v1/sessions/{sid}/branches"),
+            Some(json!({ "after_message_id": partner1 })),
+            Some(&admin),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_ne!(fork_id, main_id, "ветки независимы");
 }
 
 // ── Stats (RBAC) ──────────────────────────────────────────────
@@ -1514,4 +1713,481 @@ async fn stt_happy_path_returns_text() {
     );
     let value: Value = serde_json::from_slice(&bytes).expect("json");
     assert_eq!(value["text"], "привет из мока");
+}
+
+// ── Local models (MODELS_DIR) ─────────────────────────────────
+
+#[tokio::test]
+async fn local_models_require_admin_and_list_files() {
+    let app = TestApp::new();
+    let user = app.user_token().await;
+
+    // Обычный пользователь → 403.
+    let (status, _) = app
+        .call("GET", "/api/v1/local-models", None, Some(&user))
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // Без токена → 401.
+    let (status, _) = app.call("GET", "/api/v1/local-models", None, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // Admin → 200, массив (может быть пустым — models/ не обязательно существует).
+    let admin = app.admin_token().await;
+    let (status, body) = app
+        .call("GET", "/api/v1/local-models", None, Some(&admin))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.is_array(), "ожидался массив: {body}");
+}
+
+#[tokio::test]
+async fn local_model_download_rejects_bad_source_for_user_and_validates_body() {
+    let app = TestApp::new();
+    let admin = app.admin_token().await;
+
+    // Пустой source → 400.
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v1/local-models/download",
+            Some(json!({ "source": "  " })),
+            Some(&admin),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+    // Некорректный HF repo → 400 (не уходим в сеть).
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v1/local-models/download",
+            Some(json!({ "source": "not-a-repo-id" })),
+            Some(&admin),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let msg = body["error"].as_str().unwrap_or_default();
+    assert!(msg.contains("org/name") || msg.contains("hf"), "{msg}");
+}
+
+#[tokio::test]
+async fn local_model_delete_missing_returns_404_and_traversal_400() {
+    let app = TestApp::new();
+    let admin = app.admin_token().await;
+
+    // Traversal в query → 400 (validate до NotFound).
+    let (status, body) = app
+        .call(
+            "DELETE",
+            "/api/v1/local-models?name=../secret",
+            None,
+            Some(&admin),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+    // Не существует → 404.
+    let (status, body) = app
+        .call(
+            "DELETE",
+            "/api/v1/local-models?name=definitely-missing.gguf",
+            None,
+            Some(&admin),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+
+    // Без name → 400.
+    let (status, _) = app
+        .call("DELETE", "/api/v1/local-models", None, Some(&admin))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn local_models_download_and_delete_roundtrip() {
+    use axum::routing::get as route_get;
+    let async_handler = || async { b"local-model-bytes".to_vec() };
+    let mock = crate::infrastructure::providers::testkit::spawn(
+        axum::Router::new().route("/weights.bin", route_get(async_handler)),
+    )
+    .await;
+
+    let app = TestApp::new();
+    let admin = app.admin_token().await;
+
+    let (status, body) = app
+        .call(
+            "POST",
+            "/api/v1/local-models/download",
+            Some(json!({
+                "source": format!("{mock}/weights.bin"),
+                "name": "na-test-weights.bin"
+            })),
+            Some(&admin),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["name"], "na-test-weights.bin", "{body}");
+    assert_eq!(body["size_bytes"], 17, "{body}");
+
+    // Файл появился в списке.
+    let (status, body) = app
+        .call("GET", "/api/v1/local-models", None, Some(&admin))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let names: Vec<&str> = body
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|f| f["name"].as_str()).collect())
+        .unwrap_or_default();
+    assert!(names.contains(&"na-test-weights.bin"), "{body}");
+
+    // Удаляем.
+    let (status, body) = app
+        .call(
+            "DELETE",
+            "/api/v1/local-models?name=na-test-weights.bin",
+            None,
+            Some(&admin),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // Повторное удаление → 404.
+    let (status, _) = app
+        .call(
+            "DELETE",
+            "/api/v1/local-models?name=na-test-weights.bin",
+            None,
+            Some(&admin),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+// ── Профиль: логин, пароль, аватар ─────────────────────────────
+
+/// Собирает multipart/form-data тело с одним файловым полем.
+fn multipart_file_body(
+    boundary: &str,
+    field: &str,
+    filename: &str,
+    mime: &str,
+    data: &[u8],
+) -> Vec<u8> {
+    let mut body = Vec::new();
+    body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+    body.extend_from_slice(
+        format!("Content-Disposition: form-data; name=\"{field}\"; filename=\"{filename}\"\r\n")
+            .as_bytes(),
+    );
+    body.extend_from_slice(format!("Content-Type: {mime}\r\n\r\n").as_bytes());
+    body.extend_from_slice(data);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    body
+}
+
+/// Минимальный PNG: сигнатура + тело (сервер проверяет магические байты).
+fn fake_png(extra: &[u8]) -> Vec<u8> {
+    let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    png.extend_from_slice(extra);
+    png
+}
+
+#[tokio::test]
+async fn profile_endpoints_require_auth() {
+    let app = TestApp::new();
+    for (method, uri) in [
+        ("GET", "/api/v1/profile"),
+        ("PATCH", "/api/v1/profile"),
+        ("PUT", "/api/v1/profile/password"),
+        ("PUT", "/api/v1/profile/avatar"),
+        ("DELETE", "/api/v1/profile/avatar"),
+        ("GET", "/api/v1/users/some-id/avatar"),
+    ] {
+        let (status, _) = app.call(method, uri, Some(json!({})), None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{method} {uri}");
+    }
+}
+
+#[tokio::test]
+async fn profile_update_login_and_display_name() {
+    let app = TestApp::new();
+    let token = app.user_token().await;
+
+    // Свежий профиль.
+    let (status, body) = app.call("GET", "/api/v1/profile", None, Some(&token)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["login"], USER_LOGIN);
+    assert_eq!(body["has_avatar"], false);
+
+    // Смена логина и отображаемого имени.
+    let (status, body) = app
+        .call(
+            "PATCH",
+            "/api/v1/profile",
+            Some(json!({ "login": "alice_renamed", "display_name": "Алиса 2.0" })),
+            Some(&token),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["login"], "alice_renamed");
+    assert_eq!(body["display_name"], "Алиса 2.0");
+
+    // Старый JWT валиден: контекст читает логин из БД, а не из токена.
+    let (status, body) = app.call("GET", "/api/v1/auth/me", None, Some(&token)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["login"], "alice_renamed");
+
+    // Вход с новым логином работает, со старым — нет.
+    let _new = app.login("alice_renamed", USER_PASSWORD).await;
+    let (status, _) = app
+        .call(
+            "POST",
+            "/api/v1/auth/login",
+            Some(json!({ "login": USER_LOGIN, "password": USER_PASSWORD })),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // Занятый логин → 409.
+    let (status, _) = app
+        .call(
+            "PATCH",
+            "/api/v1/profile",
+            Some(json!({ "login": ADMIN_LOGIN, "display_name": null })),
+            Some(&token),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    // Плохой логин → 400.
+    let (status, _) = app
+        .call(
+            "PATCH",
+            "/api/v1/profile",
+            Some(json!({ "login": "no spaces allowed", "display_name": null })),
+            Some(&token),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // display_name: null — очистка имени.
+    let (status, body) = app
+        .call(
+            "PATCH",
+            "/api/v1/profile",
+            Some(json!({ "login": "alice_renamed", "display_name": null })),
+            Some(&token),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["display_name"].is_null(), "{body}");
+}
+
+#[tokio::test]
+async fn profile_password_change_requires_current_password() {
+    let app = TestApp::new();
+    let token = app.user_token().await;
+
+    // Не тот текущий пароль → 400, хеш не меняется.
+    let (status, body) = app
+        .call(
+            "PUT",
+            "/api/v1/profile/password",
+            Some(json!({
+                "current_password": "wrong-current",
+                "new_password": "secret22"
+            })),
+            Some(&token),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let (status, _) = app
+        .call(
+            "POST",
+            "/api/v1/auth/login",
+            Some(json!({ "login": USER_LOGIN, "password": USER_PASSWORD })),
+            None,
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "старый пароль должен остаться рабочим"
+    );
+
+    // Слишком короткий новый пароль → 400.
+    let (status, _) = app
+        .call(
+            "PUT",
+            "/api/v1/profile/password",
+            Some(json!({
+                "current_password": USER_PASSWORD,
+                "new_password": "12345"
+            })),
+            Some(&token),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Совпадение с текущим → 400.
+    let (status, _) = app
+        .call(
+            "PUT",
+            "/api/v1/profile/password",
+            Some(json!({
+                "current_password": USER_PASSWORD,
+                "new_password": USER_PASSWORD
+            })),
+            Some(&token),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Успешная смена: старый пароль падает, новый — работает.
+    let (status, body) = app
+        .call(
+            "PUT",
+            "/api/v1/profile/password",
+            Some(json!({
+                "current_password": USER_PASSWORD,
+                "new_password": "secret22"
+            })),
+            Some(&token),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, _) = app
+        .call(
+            "POST",
+            "/api/v1/auth/login",
+            Some(json!({ "login": USER_LOGIN, "password": USER_PASSWORD })),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let _ = app.login(USER_LOGIN, "secret22").await;
+}
+
+#[tokio::test]
+async fn profile_avatar_upload_serve_and_delete() {
+    let app = TestApp::new();
+    let token = app.user_token().await;
+
+    let (status, body) = app.call("GET", "/api/v1/profile", None, Some(&token)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let user_id = body["id"].as_str().expect("id").to_string();
+    let uri = format!("/api/v1/users/{user_id}/avatar");
+
+    // Аватара нет → 404.
+    let (status, _, _) = app.call_bytes("GET", &uri, None, None, Some(&token)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Загрузка валидного PNG (multipart, поле file).
+    let png = fake_png(b"avatar-bytes");
+    let boundary = "na-profile-boundary";
+    let body = multipart_file_body(boundary, "file", "avatar.png", "image/png", &png);
+    let ct = format!("multipart/form-data; boundary={boundary}");
+    let (status, _, raw) = app
+        .call_bytes(
+            "PUT",
+            "/api/v1/profile/avatar",
+            Some(&ct),
+            Some(body),
+            Some(&token),
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "upload: {}",
+        String::from_utf8_lossy(&raw)
+    );
+    let uploaded: Value = serde_json::from_slice(&raw).expect("json");
+    assert_eq!(uploaded["has_avatar"], true);
+
+    // Отдаётся байтами с правильным Content-Type.
+    let (status, headers, data) = app.call_bytes("GET", &uri, None, None, Some(&token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(data, png, "байты аватара должны совпадать с загруженными");
+    assert_eq!(
+        headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+        Some("image/png")
+    );
+
+    // Ложный MIME (PNG-байты под видом JPEG) → 400, аватар не портится.
+    let body = multipart_file_body(boundary, "file", "liar.jpg", "image/jpeg", &png);
+    let (status, _, _) = app
+        .call_bytes(
+            "PUT",
+            "/api/v1/profile/avatar",
+            Some(&ct),
+            Some(body),
+            Some(&token),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, data) = app.call("GET", "/api/v1/profile", None, Some(&token)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(data["has_avatar"], true, "аватар должен пережить отказ");
+
+    // Удаление → снова 404 и has_avatar=false.
+    let (status, body) = app
+        .call("DELETE", "/api/v1/profile/avatar", None, Some(&token))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["has_avatar"], false);
+    let (status, _, _) = app.call_bytes("GET", &uri, None, None, Some(&token)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn user_can_fetch_another_users_avatar() {
+    let app = TestApp::new();
+    let admin = app.admin_token().await;
+    let user = app.user_token().await;
+
+    // Админ публикует аватар.
+    let (status, body) = app.call("GET", "/api/v1/profile", None, Some(&admin)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let admin_id = body["id"].as_str().expect("id").to_string();
+
+    let png = fake_png(b"admin-avatar");
+    let boundary = "na-avatar-boundary";
+    let body = multipart_file_body(boundary, "file", "a.png", "image/png", &png);
+    let ct = format!("multipart/form-data; boundary={boundary}");
+    let (status, _, raw) = app
+        .call_bytes(
+            "PUT",
+            "/api/v1/profile/avatar",
+            Some(&ct),
+            Some(body),
+            Some(&admin),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&raw));
+
+    // Обычный пользователь видит чужой аватар (шапка/лидерборд), без admin-прав.
+    let (status, headers, data) = app
+        .call_bytes(
+            "GET",
+            &format!("/api/v1/users/{admin_id}/avatar"),
+            None,
+            None,
+            Some(&user),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(data, png);
+    assert_eq!(
+        headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+        Some("image/png")
+    );
 }

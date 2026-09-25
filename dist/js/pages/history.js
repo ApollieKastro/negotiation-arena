@@ -122,8 +122,9 @@ export function renderPage(root, params = {}) {
       rows,
       emptyText: t('common.noData'),
       onRowClick: (r) => {
-        if (r.status === 'finished') navigate(`#/result/${r.id}`);
-        else navigate(`#/session/${r.id}`);
+        // Активная — продолжить игру; завершённая/брошенная — архив переписки
+        if (r.status === 'active') navigate(`#/session/${r.id}`);
+        else navigate(`#/dialog/${r.id}`);
       },
     }));
   }

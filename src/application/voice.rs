@@ -99,10 +99,17 @@ impl VoiceService {
                     mime_type: mime.to_string(),
                     filename: filename.to_string(),
                 },
-                language: None,
+                // Домен приложения — русский; локальный whisper/piper ждут ru.
+                language: Some("ru".into()),
             })
             .await?;
-        Ok(result.text.trim().to_string())
+        let text = result.text.trim().to_string();
+        if text.is_empty() {
+            return Err(AppError::BadRequest(
+                "Речь не распознана — говорите громче, дольше и ближе к микрофону".into(),
+            ));
+        }
+        Ok(text)
     }
 }
 

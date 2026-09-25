@@ -140,11 +140,38 @@ pub struct Session {
 pub struct SessionMessage {
     pub id: String,
     pub session_id: String,
+    /// Ветка, которой принадлежит реплика (`None` — ещё не привязана).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_id: Option<String>,
     pub turn_index: u32,
     pub role: MessageRole,
     pub content: String,
     /// Стратегия игрока (`collaboration` / `compromise` / `confrontation`).
     pub strategy: Option<String>,
     pub score_delta: i32,
+    pub created_at: String,
+}
+
+/// Ветка диалога сессии.
+///
+/// Сессия — дерево: main-ветка создаётся вместе с сессией, форк копирует
+/// префикс реплик до точки ветвления и несёт **снапшот метрик** в этой
+/// точке. Сессия ([`Session`]) всегда отражает состояние `is_current` ветки.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionBranch {
+    pub id: String,
+    pub session_id: String,
+    /// Ветка, из которой произошёл форк; `None` у main.
+    pub parent_id: Option<String>,
+    /// `'main'` у основной линии, `'fork'` у ответвлений.
+    pub label: String,
+    /// `turn_index` реплики-точки ветвления (`0` — opening).
+    pub fork_turn_index: u32,
+    /// Снапшот метрик ветки (JSON `SessionMetrics`).
+    pub metrics: SessionMetrics,
+    pub total_score: i32,
+    pub turn_count: u32,
+    /// Текущая ветка сессии (в сессии ровно одна).
+    pub is_current: bool,
     pub created_at: String,
 }

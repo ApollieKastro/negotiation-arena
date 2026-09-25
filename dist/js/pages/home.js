@@ -66,7 +66,7 @@ function sessionRow(s, titleMap) {
   return h('div.row-between.card', {
     style: { padding: 'var(--sp-3) var(--sp-4)', cursor: 'pointer' },
     onClick: () => {
-      navigate(s.status === 'finished' ? `#/result/${s.id}` : `#/session/${s.id}`);
+      navigate(s.status === 'active' ? `#/session/${s.id}` : `#/dialog/${s.id}`);
     },
   },
     h('div.stack', { style: { gap: '2px' } },

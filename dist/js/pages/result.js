@@ -176,6 +176,7 @@ export function renderPage(root, params = {}) {
           h('div.page-sub', null, t('result.sub'))
         ),
         h('div.page-actions', null,
+          h('a.btn.btn-secondary', { href: `#/dialog/${id}` }, t('action.dialog')),
           h('a.btn.btn-primary', { href: '#/scenarios' }, t('action.playAgain')),
           h('a.btn.btn-ghost', { href: '#/' }, t('action.home'))
         )
@@ -187,6 +188,7 @@ export function renderPage(root, params = {}) {
       goalFeedback,
       recs,
       h('div.row.mt-4', null,
+        h('a.btn.btn-secondary', { href: `#/dialog/${id}` }, t('action.dialog')),
         h('a.btn.btn-primary', { href: '#/scenarios' }, t('action.playAgain')),
         h('a.btn.btn-secondary', { href: '#/' }, t('action.home'))
       )

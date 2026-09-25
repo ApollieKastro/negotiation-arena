@@ -15,26 +15,26 @@ function truncate(text, max = 150) {
   return s.length > max ? `${s.slice(0, max).trimEnd()}…` : s;
 }
 
-async function startSession(scenarioId, btn) {
+async function startSession(scenarioId, btn, { mode = null, to = 'session' } = {}) {
   if (btn) { btn.disabled = true; btn.textContent = t('action.starting'); }
   try {
-    const started = await request('/sessions', {
-      method: 'POST',
-      body: { scenario_id: scenarioId },
-    });
+    const body = { scenario_id: scenarioId };
+    if (mode) body.mode = mode;
+    const started = await request('/sessions', { method: 'POST', body });
     toast(t('scenarios.started'), 'success');
-    navigate(`#/session/${started.session.id}`);
+    navigate(to === 'call' ? `#/call/${started.session.id}` : `#/session/${started.session.id}`);
   } catch (err) {
     toast(err instanceof ApiError ? err.message : t('scenarios.startFail'), 'error');
     if (btn) { btn.disabled = false; btn.textContent = t('action.start'); }
   }
 }
 
-function detailRow(label, value) {
+function detailRow(label, value, hint) {
   if (value === null || value === undefined || value === '' ||
       (Array.isArray(value) && !value.length)) return null;
   return h('div.stack', { style: { gap: '2px' } },
-    h('div.small.muted', { text: label }),
+    h('div.small.muted', { text: label, title: hint || undefined }),
+    hint ? h('div.small.muted', { style: { fontStyle: 'italic' }, text: hint }) : null,
     Array.isArray(value)
       ? h('div', null, ...value.map((v, i) =>
           h('div', { text: (value.length > 1 ? `${i + 1}. ` : '') + String(v) })))
@@ -64,7 +64,7 @@ function openDetails(s, onStart) {
         detailRow(t('scenarios.role'), s.player_role),
         detailRow(t('scenarios.company'), s.player_company),
         detailRow(t('scenarios.goal'), s.player_goal),
-        detailRow(t('scenarios.batna'), s.player_batna)
+        detailRow(t('scenarios.batna'), s.player_batna, t('scenarios.batnaHint'))
       )),
       h('div.card', null, h('div.card-body.stack', { style: { gap: 'var(--sp-3)' } },
         h('div.card-title', { text: t('scenarios.partner', { name: s.partner_name }) }),
@@ -72,7 +72,7 @@ function openDetails(s, onStart) {
         detailRow(t('scenarios.company'), s.partner_company),
         detailRow(t('scenarios.goal'), s.partner_goal),
         detailRow(t('scenarios.extraGoals'), s.partner_goals),
-        detailRow(t('scenarios.batna'), s.partner_batna),
+        detailRow(t('scenarios.batna'), s.partner_batna, t('scenarios.batnaHint')),
         detailRow(t('scenarios.personality'), personalityBits || '—')
       ))
     ),
@@ -104,6 +104,11 @@ function scenarioCard(s) {
     text: t('action.start'),
     onClick: () => startSession(s.id, startBtn),
   });
+  const callBtn = h('button.btn.btn-secondary.btn-sm', {
+    type: 'button',
+    text: t('call.button'),
+    onClick: () => startSession(s.id, callBtn, { mode: 'voice', to: 'call' }),
+  });
   const moreBtn = h('button.btn.btn-ghost.btn-sm', {
     type: 'button',
     text: t('action.more'),
@@ -123,7 +128,7 @@ function scenarioCard(s) {
             h('span.muted', { text: t('home.goal') }),
             h('span', { text: truncate(s.player_goal, 110) }))
         : null,
-      h('div.row', null, startBtn, moreBtn)
+      h('div.row', null, startBtn, callBtn, moreBtn)
     )
   );
 }

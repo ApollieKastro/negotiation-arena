@@ -8,7 +8,7 @@ use crate::domain::entities::provider::{
     ModelRecord, Provider, RoleAssignment, UserModelPreference,
 };
 use crate::domain::entities::scenario::Scenario;
-use crate::domain::entities::session::{Session, SessionMessage};
+use crate::domain::entities::session::{Session, SessionBranch, SessionMessage};
 use crate::domain::entities::user::{LoginAttemptUpdate, User, UserRole, UserWithSecret};
 use crate::error::AppResult;
 
@@ -40,10 +40,22 @@ pub trait UserRepository: Send + Sync {
     ) -> AppResult<User>;
 
     fn by_id(&self, id: &str) -> AppResult<Option<User>>;
+    /// Как [`Self::by_id`], но с хешем пароля (смена пароля, аутентификация).
+    fn by_id_with_secret(&self, id: &str) -> AppResult<Option<UserWithSecret>>;
     fn by_login(&self, login: &str) -> AppResult<Option<UserWithSecret>>;
     fn list(&self) -> AppResult<Vec<User>>;
     fn update_role(&self, id: &str, role: UserRole) -> AppResult<()>;
     fn set_active(&self, id: &str, is_active: bool) -> AppResult<()>;
+    /// Смена логина и отображаемого имени (сам профиль, `display_name` — `None` не трогает? см. impl).
+    fn update_profile(&self, id: &str, login: &str, display_name: Option<&str>) -> AppResult<()>;
+    /// Замена хеша пароля.
+    fn update_password(&self, id: &str, password_hash: &str) -> AppResult<()>;
+    /// Загрузка/замена аватара.
+    fn set_avatar(&self, id: &str, mime: &str, data: &[u8]) -> AppResult<()>;
+    /// Удаление аватара (нет строки — no-op).
+    fn clear_avatar(&self, id: &str) -> AppResult<()>;
+    /// Байты аватара: `(mime, data)`; `None` — аватара нет.
+    fn avatar(&self, id: &str) -> AppResult<Option<(String, Vec<u8>)>>;
     fn delete(&self, id: &str) -> AppResult<()>;
     fn count(&self) -> AppResult<u64>;
 
@@ -110,8 +122,9 @@ pub struct PlatformSessionsAggregate {
 }
 
 pub trait SessionRepository: Send + Sync {
+    /// Создаёт сессию и main-ветку (`id` ветки = `id` сессии).
     fn create(&self, session: &Session) -> AppResult<()>;
-    /// Создаёт сессию и opening-сообщение **в одной транзакции**.
+    /// Создаёт сессию, main-ветку и opening-сообщение **в одной транзакции**.
     fn create_with_opening(&self, session: &Session, opening: &SessionMessage) -> AppResult<()>;
     fn get(&self, id: &str) -> AppResult<Option<Session>>;
     /// История сессий пользователя: `LIMIT/OFFSET` + общий счётчик.
@@ -122,15 +135,46 @@ pub trait SessionRepository: Send + Sync {
         offset: u32,
     ) -> AppResult<(Vec<Session>, u64)>;
     fn update(&self, session: &Session) -> AppResult<()>;
-    /// Фиксирует ход: UPDATE сессии + 1–2 сообщения **в одной транзакции**.
+    /// Фиксирует ход: UPDATE сессии и текущей ветки + 1–2 сообщения
+    /// **в одной транзакции**.
     fn commit_turn(
         &self,
         session: &Session,
+        branch: &SessionBranch,
         player: &SessionMessage,
         partner: Option<&SessionMessage>,
     ) -> AppResult<()>;
     fn append_message(&self, message: &SessionMessage) -> AppResult<()>;
+    /// Сообщения **текущей** (`is_current`) ветки сессии, по порядку ходов.
     fn messages(&self, session_id: &str) -> AppResult<Vec<SessionMessage>>;
+    /// Сообщения конкретной ветки (id ветки должен принадлежать сессии).
+    fn messages_in_branch(
+        &self,
+        session_id: &str,
+        branch_id: &str,
+    ) -> AppResult<Vec<SessionMessage>>;
+    /// Реплика по id (`None` — не найдена).
+    fn message(&self, id: &str) -> AppResult<Option<SessionMessage>>;
+
+    // ── Ветвление диалога ──
+    /// Все ветки сессии в порядке создания (main — первая).
+    fn branches(&self, session_id: &str) -> AppResult<Vec<SessionBranch>>;
+    /// Ветка по id (`None` — не найдена).
+    fn branch(&self, id: &str) -> AppResult<Option<SessionBranch>>;
+    /// Текущая (`is_current`) ветка сессии.
+    fn current_branch(&self, session_id: &str) -> AppResult<Option<SessionBranch>>;
+    /// Число веток сессии (включая main).
+    fn count_branches(&self, session_id: &str) -> AppResult<u64>;
+    /// Атомарно создаёт форк: сбрасывает `is_current` у остальных веток,
+    /// вставляет новую ветку и копии префикса реплик, обновляет сессию.
+    fn fork_branch(
+        &self,
+        branch: &SessionBranch,
+        copies: &[SessionMessage],
+        session: &Session,
+    ) -> AppResult<()>;
+    /// Атомарно делает ветку текущей и подставляет её состояние в сессию.
+    fn switch_branch(&self, branch_id: &str, session: &Session) -> AppResult<()>;
 
     /// Агрегаты сессий пользователя одной строкой SQL.
     fn user_stats_aggregate(&self, user_id: &str) -> AppResult<UserSessionsAggregate>;

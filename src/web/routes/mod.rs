@@ -5,6 +5,8 @@
 //! 2. файл из `dist/` (assets, если собран фронтенд);
 //! 3. `dist/index.html` (SPA-навигация);
 //! 4. JSON-404 `{"error": "Маршрут не найден"}` (если UI ещё не собран).
+//!
+//! Также отдаётся `docs/` под `/docs` (MODELS_GUIDE.md и т.п. — ссылки из UI).
 
 pub mod health;
 #[cfg(test)]
@@ -53,6 +55,8 @@ pub fn build(state: AppState) -> Router {
         .route("/health", axum::routing::get(health::health))
         .nest("/api/v1", api_v1_routes(limiter))
         .nest_service("/static", ServeDir::new("static"))
+        // Документация (гайды): /docs/MODELS_GUIDE.md и др.
+        .nest_service("/docs", ServeDir::new("docs"))
         // Собранный UI в dist/: файлы as-is, при промахе — index.html / JSON-404.
         .fallback_service(ServeDir::new("dist").fallback(service_fn(
             |req: Request<Body>| async move { Ok::<_, Infallible>(spa_fallback(req).await) },
@@ -126,6 +130,20 @@ fn api_v1_routes(limiter: RateLimiter) -> Router<AppState> {
         // ── Auth (публичные + me) ──
         .nest("/auth", public_auth)
         .route("/auth/me", get(handlers::auth::me))
+        // ── Профиль (свой: логин/имя, пароль, аватар) ──
+        .route(
+            "/profile",
+            get(handlers::profile::get).patch(handlers::profile::update),
+        )
+        .route("/profile/password", put(handlers::profile::change_password))
+        .route(
+            "/profile/avatar",
+            put(handlers::profile::upload_avatar)
+                .delete(handlers::profile::remove_avatar)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    handlers::profile::AVATAR_BODY_LIMIT,
+                )),
+        )
         // ── Пользователи (admin) ──
         .route(
             "/users",
@@ -135,6 +153,8 @@ fn api_v1_routes(limiter: RateLimiter) -> Router<AppState> {
             "/users/:id",
             get(handlers::users::get).delete(handlers::users::remove),
         )
+        // Аватар — ниже `/users/:id`: любой вошедший (шапка, лидерборд).
+        .route("/users/:id/avatar", get(handlers::users::avatar))
         .route("/users/:id/role", patch(handlers::users::set_role))
         .route("/users/:id/active", patch(handlers::users::set_active))
         // ── Сценарии ──
@@ -166,6 +186,15 @@ fn api_v1_routes(limiter: RateLimiter) -> Router<AppState> {
         .route("/sessions/:id/finish", post(handlers::sessions::finish))
         .route("/sessions/:id/abandon", post(handlers::sessions::abandon))
         .route("/sessions/:id/report", get(handlers::sessions::report))
+        // ── Ветвление диалога ──
+        .route(
+            "/sessions/:id/branches",
+            get(handlers::sessions::branches).post(handlers::sessions::create_branch),
+        )
+        .route(
+            "/sessions/:id/branches/:branch_id",
+            put(handlers::sessions::switch_branch),
+        )
         // ── Статистика ──
         .route("/stats/me", get(handlers::stats::me))
         .route("/stats/users/:id", get(handlers::stats::user))
@@ -213,6 +242,16 @@ fn api_v1_routes(limiter: RateLimiter) -> Router<AppState> {
         .route(
             "/model-assignments/:role",
             put(handlers::providers::assign_role).delete(handlers::providers::unassign_role),
+        )
+        // ── Локальные файлы моделей (MODELS_DIR): список/скачивание/удаление ──
+        .route(
+            "/local-models",
+            get(handlers::providers::list_local_models)
+                .delete(handlers::providers::delete_local_model),
+        )
+        .route(
+            "/local-models/download",
+            post(handlers::providers::download_local_model),
         )
         // ── Пользовательские предпочтения моделей ──
         .route("/model-preferences/me", get(handlers::model_prefs::list_me))

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use rusqlite::{params, OptionalExtension, Row};
 
 use crate::domain::entities::session::{
-    MessageRole, Session, SessionMessage, SessionMode, SessionStatus,
+    MessageRole, Session, SessionBranch, SessionMessage, SessionMode, SessionStatus,
 };
 use crate::domain::ports::{
     LeaderboardRow, PlatformSessionsAggregate, SessionRepository, UserSessionsAggregate,
@@ -59,17 +59,47 @@ impl SqliteSessionRepo {
     }
 
     fn map_message(row: &Row<'_>) -> rusqlite::Result<SessionMessage> {
-        let role: String = row.get(3)?;
-        let turn_index: i64 = row.get(2)?;
+        let role: String = row.get(4)?;
+        let turn_index: i64 = row.get(3)?;
         Ok(SessionMessage {
             id: row.get(0)?,
             session_id: row.get(1)?,
+            branch_id: row.get(2)?,
             turn_index: turn_index.max(0) as u32,
             role: MessageRole::from_slug(&role),
-            content: row.get(4)?,
-            strategy: row.get(5)?,
-            score_delta: row.get(6)?,
-            created_at: row.get(7)?,
+            content: row.get(5)?,
+            strategy: row.get(6)?,
+            score_delta: row.get(7)?,
+            created_at: row.get(8)?,
+        })
+    }
+
+    fn map_branch(row: &Row<'_>) -> rusqlite::Result<SessionBranch> {
+        let metrics_raw: String = row.get(5)?;
+        let fork_turn_index: i64 = row.get(4)?;
+        let turn_count: i64 = row.get(7)?;
+        let metrics = match serde_json::from_str(&metrics_raw) {
+            Ok(m) => m,
+            Err(err) => {
+                tracing::warn!(
+                    branch_id = %row.get::<_, String>(0).unwrap_or_default(),
+                    error = %err,
+                    "не удалось разобрать session_branches.metrics, используем default"
+                );
+                Default::default()
+            }
+        };
+        Ok(SessionBranch {
+            id: row.get(0)?,
+            session_id: row.get(1)?,
+            parent_id: row.get(2)?,
+            label: row.get(3)?,
+            fork_turn_index: fork_turn_index.max(0) as u32,
+            metrics,
+            total_score: row.get(6)?,
+            turn_count: turn_count.max(0) as u32,
+            is_current: row.get::<_, i64>(8)? != 0,
+            created_at: row.get(9)?,
         })
     }
 }
@@ -78,23 +108,90 @@ const SELECT: &str = "SELECT id, user_id, scenario_id, mode, status, total_score
     turn_count, metrics, ending_id, ending_title, feedback, created_at, finished_at \
     FROM sessions";
 
+const SELECT_MESSAGE: &str =
+    "SELECT id, session_id, branch_id, turn_index, role, content, strategy, score_delta, created_at \
+     FROM session_messages";
+
+const SELECT_BRANCH: &str = "SELECT id, session_id, parent_id, label, fork_turn_index, \
+    metrics, total_score, turn_count, is_current, created_at \
+    FROM session_branches";
+
 /// Вставляет одну строку `session_messages` (используется внутри транзакций).
 fn insert_message(
     conn: &rusqlite::Connection,
     message: &SessionMessage,
 ) -> rusqlite::Result<usize> {
     conn.execute(
-        "INSERT INTO session_messages (id, session_id, turn_index, role, content, strategy, score_delta, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO session_messages (id, session_id, branch_id, turn_index, role, content, strategy, score_delta, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             message.id,
             message.session_id,
+            message.branch_id,
             message.turn_index as i64,
             message.role.slug(),
             message.content,
             message.strategy,
             message.score_delta,
             message.created_at,
+        ],
+    )
+}
+
+/// main-ветка сессии: `id` ветки равен `id` сессии.
+fn main_branch(session: &Session) -> SessionBranch {
+    SessionBranch {
+        id: session.id.clone(),
+        session_id: session.id.clone(),
+        parent_id: None,
+        label: "main".into(),
+        fork_turn_index: 0,
+        metrics: session.metrics.clone(),
+        total_score: session.total_score,
+        turn_count: session.turn_count,
+        is_current: true,
+        created_at: session.created_at.clone(),
+    }
+}
+
+/// Вставляет строку `session_branches` (используется внутри транзакций).
+fn insert_branch(conn: &rusqlite::Connection, branch: &SessionBranch) -> rusqlite::Result<usize> {
+    let metrics = serde_json::to_string(&branch.metrics)
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+    conn.execute(
+        "INSERT INTO session_branches (id, session_id, parent_id, label, fork_turn_index,
+            metrics, total_score, turn_count, is_current, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![
+            branch.id,
+            branch.session_id,
+            branch.parent_id,
+            branch.label,
+            branch.fork_turn_index as i64,
+            metrics,
+            branch.total_score,
+            branch.turn_count as i64,
+            branch.is_current as i64,
+            branch.created_at,
+        ],
+    )
+}
+
+/// Обновляет снапшот метрик ветки (вызывается внутри транзакции хода).
+fn update_branch_state(
+    conn: &rusqlite::Connection,
+    branch: &SessionBranch,
+) -> rusqlite::Result<usize> {
+    let metrics = serde_json::to_string(&branch.metrics)
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+    conn.execute(
+        "UPDATE session_branches SET metrics = ?1, total_score = ?2, turn_count = ?3
+         WHERE id = ?4",
+        params![
+            metrics,
+            branch.total_score,
+            branch.turn_count as i64,
+            branch.id
         ],
     )
 }
@@ -150,7 +247,10 @@ fn update_session(conn: &rusqlite::Connection, session: &Session) -> rusqlite::R
 impl SessionRepository for SqliteSessionRepo {
     fn create(&self, session: &Session) -> AppResult<()> {
         let conn = self.db.conn();
-        insert_session(&conn, session)?;
+        let tx = conn.unchecked_transaction()?;
+        insert_session(&tx, session)?;
+        insert_branch(&tx, &main_branch(session))?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -158,7 +258,12 @@ impl SessionRepository for SqliteSessionRepo {
         let conn = self.db.conn();
         let tx = conn.unchecked_transaction()?;
         insert_session(&tx, session)?;
-        insert_message(&tx, opening)?;
+        let branch = main_branch(session);
+        insert_branch(&tx, &branch)?;
+        // Opening всегда принадлежит main-ветке сессии.
+        let mut opening = opening.clone();
+        opening.branch_id = Some(branch.id.clone());
+        insert_message(&tx, &opening)?;
         tx.commit()?;
         Ok(())
     }
@@ -200,12 +305,15 @@ impl SessionRepository for SqliteSessionRepo {
     fn commit_turn(
         &self,
         session: &Session,
+        branch: &SessionBranch,
         player: &SessionMessage,
         partner: Option<&SessionMessage>,
     ) -> AppResult<()> {
         let conn = self.db.conn();
         let tx = conn.unchecked_transaction()?;
         update_session(&tx, session)?;
+        // Снапшот ветки должен отражать те же метрики, что и сессия.
+        update_branch_state(&tx, branch)?;
         insert_message(&tx, player)?;
         if let Some(p) = partner {
             insert_message(&tx, p)?;
@@ -222,12 +330,118 @@ impl SessionRepository for SqliteSessionRepo {
 
     fn messages(&self, session_id: &str) -> AppResult<Vec<SessionMessage>> {
         let conn = self.db.conn();
-        let mut stmt = conn.prepare(
-            "SELECT id, session_id, turn_index, role, content, strategy, score_delta, created_at
-             FROM session_messages WHERE session_id = ?1 ORDER BY turn_index ASC, created_at ASC",
-        )?;
+        let sql = format!(
+            "{SELECT_MESSAGE} WHERE branch_id = (
+                 SELECT id FROM session_branches
+                 WHERE session_id = ?1 AND is_current = 1
+             ) ORDER BY turn_index ASC, created_at ASC"
+        );
+        let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(params![session_id], Self::map_message)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    fn messages_in_branch(
+        &self,
+        session_id: &str,
+        branch_id: &str,
+    ) -> AppResult<Vec<SessionMessage>> {
+        let conn = self.db.conn();
+        let sql = format!(
+            "{SELECT_MESSAGE} WHERE session_id = ?1 AND branch_id = ?2 \
+             ORDER BY turn_index ASC, created_at ASC"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![session_id, branch_id], Self::map_message)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    fn message(&self, id: &str) -> AppResult<Option<SessionMessage>> {
+        let conn = self.db.conn();
+        let sql = format!("{SELECT_MESSAGE} WHERE id = ?1");
+        conn.query_row(&sql, params![id], Self::map_message)
+            .optional()
+            .map_err(Into::into)
+    }
+
+    fn branches(&self, session_id: &str) -> AppResult<Vec<SessionBranch>> {
+        let conn = self.db.conn();
+        let sql = format!("{SELECT_BRANCH} WHERE session_id = ?1 ORDER BY created_at ASC, id ASC");
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params![session_id], Self::map_branch)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    fn branch(&self, id: &str) -> AppResult<Option<SessionBranch>> {
+        let conn = self.db.conn();
+        let sql = format!("{SELECT_BRANCH} WHERE id = ?1");
+        conn.query_row(&sql, params![id], Self::map_branch)
+            .optional()
+            .map_err(Into::into)
+    }
+
+    fn current_branch(&self, session_id: &str) -> AppResult<Option<SessionBranch>> {
+        let conn = self.db.conn();
+        let sql = format!("{SELECT_BRANCH} WHERE session_id = ?1 AND is_current = 1");
+        conn.query_row(&sql, params![session_id], Self::map_branch)
+            .optional()
+            .map_err(Into::into)
+    }
+
+    fn count_branches(&self, session_id: &str) -> AppResult<u64> {
+        let conn = self.db.conn();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM session_branches WHERE session_id = ?1",
+            params![session_id],
+            |r| r.get(0),
+        )?;
+        Ok(count.max(0) as u64)
+    }
+
+    fn fork_branch(
+        &self,
+        branch: &SessionBranch,
+        copies: &[SessionMessage],
+        session: &Session,
+    ) -> AppResult<()> {
+        let conn = self.db.conn();
+        let tx = conn.unchecked_transaction()?;
+        // Сначала снимаем current у всех веток сессии (уникальный индекс
+        // разрешает ровно одну is_current = 1).
+        tx.execute(
+            "UPDATE session_branches SET is_current = 0 WHERE session_id = ?1",
+            params![branch.session_id],
+        )?;
+        insert_branch(&tx, branch)?;
+        for copy in copies {
+            insert_message(&tx, copy)?;
+        }
+        // Сессия откатывается к состоянию точки ветвления.
+        update_session(&tx, session)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn switch_branch(&self, branch_id: &str, session: &Session) -> AppResult<()> {
+        let conn = self.db.conn();
+        let tx = conn.unchecked_transaction()?;
+        let cleared = tx.execute(
+            "UPDATE session_branches SET is_current = 0 WHERE session_id = ?1",
+            params![session.id],
+        )?;
+        if cleared == 0 {
+            return Err(rusqlite::Error::QueryReturnedNoRows.into());
+        }
+        let flipped = tx.execute(
+            "UPDATE session_branches SET is_current = 1 WHERE id = ?1 AND session_id = ?2",
+            params![branch_id, session.id],
+        )?;
+        if flipped != 1 {
+            return Err(rusqlite::Error::QueryReturnedNoRows.into());
+        }
+        update_session(&tx, session)?;
+        tx.commit()?;
+        Ok(())
     }
 
     fn user_stats_aggregate(&self, user_id: &str) -> AppResult<UserSessionsAggregate> {
@@ -440,6 +654,8 @@ mod tests {
         repo.append_message(&SessionMessage {
             id: "m1".into(),
             session_id: "s1".into(),
+            // create() создаёт main-ветку с id = id сессии.
+            branch_id: Some("s1".into()),
             turn_index: 0,
             role: MessageRole::Partner,
             content: "Здравствуйте!".into(),
@@ -458,6 +674,8 @@ mod tests {
         SessionMessage {
             id: uuid::Uuid::new_v4().to_string(),
             session_id: session_id.to_string(),
+            // main-ветка сессии (id ветки = id сессии).
+            branch_id: Some(session_id.to_string()),
             turn_index: turn,
             role,
             content: "реплика".into(),
@@ -497,13 +715,22 @@ mod tests {
         let partner = make_message("tx2", 1, MessageRole::Partner);
         session.turn_count = 1;
         session.total_score = 5;
+        // Ход обновляет и снапшот текущей (main) ветки.
+        let mut branch = main_branch(&session);
+        branch.metrics = session.metrics.clone();
+        branch.total_score = session.total_score;
+        branch.turn_count = session.turn_count;
 
-        repo.commit_turn(&session, &player, Some(&partner)).unwrap();
+        repo.commit_turn(&session, &branch, &player, Some(&partner))
+            .unwrap();
 
         let loaded = repo.get("tx2").unwrap().expect("session");
         assert_eq!(loaded.turn_count, 1);
         assert_eq!(loaded.total_score, 5);
         assert_eq!(repo.messages("tx2").unwrap().len(), 2);
+        let branch_loaded = repo.current_branch("tx2").unwrap().expect("ветка");
+        assert_eq!(branch_loaded.total_score, 5);
+        assert_eq!(branch_loaded.turn_count, 1);
     }
 
     /// LIMIT/OFFSET + общий счётчик: total не зависит от окна.

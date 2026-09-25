@@ -27,6 +27,12 @@ pub struct HistoryQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct MessagesQuery {
+    /// Ветка диалога; без параметра — текущая ветка сессии.
+    pub branch_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct StartRequest {
     pub scenario_id: String,
     #[serde(default)]
@@ -36,6 +42,12 @@ pub struct StartRequest {
 #[derive(Debug, Deserialize)]
 pub struct TurnRequest {
     pub text: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BranchRequest {
+    /// Реплика собеседника, **после** которой создаётся ветка.
+    pub after_message_id: String,
 }
 
 /// `GET /api/v1/sessions?limit=&offset=` — история сессий текущего пользователя.
@@ -85,14 +97,67 @@ pub async fn get(
     Ok(Json(session))
 }
 
-/// `GET /api/v1/sessions/:id/messages` — реплики диалога.
+/// `GET /api/v1/sessions/:id/messages?branch_id=` — реплики диалога.
+///
+/// Без `branch_id` — текущая ветка; с параметром — указанная (404, если
+/// ветка не принадлежит сессии).
 pub async fn messages(
     State(state): State<AppState>,
     user: AuthUser,
     Path(id): Path<String>,
+    AppQuery(q): AppQuery<MessagesQuery>,
 ) -> AppResult<Json<Vec<SessionMessage>>> {
-    let messages = state.services.sessions.messages(user.context(), &id)?;
+    let messages = state
+        .services
+        .sessions
+        .messages(user.context(), &id, q.branch_id.as_deref())?;
     Ok(Json(messages))
+}
+
+/// `GET /api/v1/sessions/:id/branches` — дерево веток сессии.
+pub async fn branches(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<String>,
+) -> AppResult<Json<Vec<crate::domain::entities::session::SessionBranch>>> {
+    let branches = state.services.sessions.branches(user.context(), &id)?;
+    Ok(Json(branches))
+}
+
+/// `POST /api/v1/sessions/:id/branches` — форк после реплики собеседника.
+///
+/// Ответ 201: `{ branch, session }` — сессия откатнута к точке ветвления.
+pub async fn create_branch(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<String>,
+    AppJson(req): AppJson<BranchRequest>,
+) -> AppResult<(StatusCode, Json<crate::application::session::BranchCreated>)> {
+    let created =
+        state
+            .services
+            .sessions
+            .create_branch(user.context(), &id, &req.after_message_id)?;
+    Ok((StatusCode::CREATED, Json(created)))
+}
+
+/// `PUT /api/v1/sessions/:id/branches/:branch_id` — переключение ветки.
+///
+/// Ответ: `{ branch, session }` — состояние сессии из снапшота ветки.
+pub async fn switch_branch(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path((id, branch_id)): Path<(String, String)>,
+) -> AppResult<Json<serde_json::Value>> {
+    let (session, branch) =
+        state
+            .services
+            .sessions
+            .switch_branch(user.context(), &id, &branch_id)?;
+    Ok(Json(serde_json::json!({
+        "session": session,
+        "branch": branch,
+    })))
 }
 
 /// `POST /api/v1/sessions/:id/turn` — ход игрока (LLM + скоринг).

@@ -63,6 +63,7 @@ docker-compose up -d
 | `LOGIN_LOCKOUT_DURATION_SECS` | Длительность lockout, сек | `900` |
 | `DB_PATH` | Путь к файлу SQLite | `negotiation_arena.db` |
 | `MODELS_DIR` | Каталог локальных моделей (STT/TTS) | `models` |
+| `LOCAL_PYTHON` | Python для `scripts/local_*.py` | `python3` |
 
 Также используется `RUST_LOG` (фильтр tracing, например `info,axum=info`).
 
@@ -103,6 +104,23 @@ OLLAMA_SEED_ASSIGN=1                         # 1 — при старте наз�
 - `POST /api/v1/voice/tts` — текст → аудио;
 - `POST /api/v1/voice/stt` — аудио (multipart, до 12 МБ) → текст.
 
+### Локальные модели STT/TTS (URL / HuggingFace)
+
+1. Установите зависимости инференса: `pip install -r scripts/requirements-voice.txt`
+   (для Nemotron ASR также нужен `nemo-speech` **или** HF-каталог с `config.json`).
+2. **Админка → Провайдеры → Локальные файлы** → укажите URL файла **или**
+   HF repo `org/name` (+ опциональный `filename`) → **Скачать**.
+   API: `POST /api/v1/local-models/download`, `GET|DELETE /api/v1/local-models`.
+3. **В модель…** → выбрать роль `stt`/`tts` → в табе **Назначения ролей** назначить активную модель.
+4. Голос пойдёт через локальный subprocess (`scripts/local_stt.py` / `local_tts.py`).
+
+Пример Nemotron ASR:
+
+- source: `nvidia/nemotron-3.5-asr-streaming-0.6b`
+- filename: `nemotron-3.5-asr-streaming-0.6b.q8_0.gguf` (или пусто — весь репозиторий через `hf`)
+
+Голосовые провайдеры:
+
 Без назначения голосовых ролей они отвечают 503 «Голосовой сервис не настроен».
 
 ## Тесты
@@ -131,6 +149,7 @@ negotiation-arena/
 ├── static/                     # статические ассеты (/static)
 ├── docs/CONCEPT.md              # продуктовая концепция
 ├── docs/DOCUMENTATION.md        # архитектура, симуляция, запуск, env
+├── docs/MODELS_GUIDE.md         # выбор LLM/STT/TTS, API-ключи, локальные модели
 ├── docs/ROADMAP.md              # план работ и прогресс
 ├── .env.example                # шаблон переменных окружения
 ├── Dockerfile                  # multi-stage сборка образа
@@ -156,6 +175,7 @@ CI (`.github/workflows/ci.yml`) гоняет `fmt` + `clippy -D warnings` + `tes
 
 - [`docs/CONCEPT.md`](docs/CONCEPT.md) — продуктовая концепция (ЦА, ценность, границы MVP)
 - [`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md) — архитектура, логика симуляции, запуск/демо, env
+- [`docs/MODELS_GUIDE.md`](docs/MODELS_GUIDE.md) — выбор LLM/STT/TTS, API-ключи, локальные модели
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — план этапов и журнал прогресса
 - [`SECURITY.md`](SECURITY.md) — секреты, шифрование, как сообщить об уязвимости
 

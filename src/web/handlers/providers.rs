@@ -8,6 +8,7 @@ use serde::Deserialize;
 use crate::domain::entities::model::{ModelDescriptor, ModelRole};
 use crate::domain::entities::provider::{ModelRecord, Provider, RoleAssignment};
 use crate::error::{AppError, AppResult};
+use crate::infrastructure::providers::{DownloadLocalModelRequest, LocalModelFile};
 use crate::web::middleware::{AppJson, AppQuery, AuthUser};
 use crate::web::state::AppState;
 
@@ -184,4 +185,58 @@ pub async fn unassign_role(
         .providers
         .clear_role_assignment(actor.context(), role)?;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ── Локальные файлы моделей (MODELS_DIR) ──
+
+/// `GET /api/v1/local-models` — рекурсивный список файлов в `MODELS_DIR`.
+pub async fn list_local_models(
+    State(state): State<AppState>,
+    actor: AuthUser,
+) -> AppResult<Json<Vec<LocalModelFile>>> {
+    let files = state
+        .services
+        .providers
+        .list_local_models(actor.context())?;
+    Ok(Json(files))
+}
+
+/// `POST /api/v1/local-models/download` — скачать URL или HF repo.
+///
+/// Body: `{ "source": "https://…/file.gguf" | "org/name", "filename"?, "name"? }`.
+pub async fn download_local_model(
+    State(state): State<AppState>,
+    actor: AuthUser,
+    AppJson(req): AppJson<DownloadLocalModelRequest>,
+) -> AppResult<Json<LocalModelFile>> {
+    let file = state
+        .services
+        .providers
+        .download_local_model(actor.context(), req)
+        .await?;
+    Ok(Json(file))
+}
+
+/// `DELETE /api/v1/local-models?name=org__repo/file.gguf` — удалить файл.
+pub async fn delete_local_model(
+    State(state): State<AppState>,
+    actor: AuthUser,
+    AppQuery(q): AppQuery<DeleteLocalModelQuery>,
+) -> AppResult<Json<serde_json::Value>> {
+    let name = q.name.trim();
+    if name.is_empty() {
+        return Err(AppError::BadRequest(
+            "query-параметр `name` обязателен".into(),
+        ));
+    }
+    state
+        .services
+        .providers
+        .delete_local_model(actor.context(), name)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeleteLocalModelQuery {
+    pub name: String,
 }

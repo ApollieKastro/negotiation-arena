@@ -54,6 +54,16 @@ export function updateSession(session) {
   }
 }
 
+/**
+ * Перезаписывает профиль в localStorage (смена логина/имени/аватара),
+ * не трогая токен. После вызова разошлите `user-updated`, чтобы shell
+ * (шапка/сайдбар) перечитал пользователя.
+ */
+export function setUser(userData) {
+  if (!userData) return;
+  try { localStorage.setItem(USER_KEY, JSON.stringify(userData)); } catch { /* ignore */ }
+}
+
 // ── Тема / шрифт ──
 
 export function getTheme() {

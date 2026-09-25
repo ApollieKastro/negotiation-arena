@@ -69,6 +69,17 @@ pub async fn get(
     Ok(Json(user))
 }
 
+/// `GET /api/v1/users/:id/avatar` — байты аватара (любой вошедший).
+///
+/// Ответ — бинарный; 404, если аватара нет. Реализация в `profile`.
+pub async fn avatar(
+    State(state): State<AppState>,
+    actor: AuthUser,
+    Path(id): Path<String>,
+) -> AppResult<axum::response::Response> {
+    super::profile::avatar_response(State(state), actor, id).await
+}
+
 /// `PATCH /api/v1/users/:id/role` — смена роли.
 pub async fn set_role(
     State(state): State<AppState>,

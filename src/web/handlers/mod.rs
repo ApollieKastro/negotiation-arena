@@ -6,6 +6,7 @@
 pub mod audit;
 pub mod auth;
 pub mod model_prefs;
+pub mod profile;
 pub mod providers;
 pub mod scenarios;
 pub mod sessions;

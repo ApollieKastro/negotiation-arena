@@ -21,6 +21,7 @@ impl SqliteUserRepo {
     fn map_row(row: &Row<'_>) -> rusqlite::Result<User> {
         let role_slug: String = row.get(3)?;
         let is_active: i32 = row.get(4)?;
+        let has_avatar: i32 = row.get(6)?;
         Ok(User {
             id: row.get(0)?,
             login: row.get(1)?,
@@ -28,11 +29,26 @@ impl SqliteUserRepo {
             role: UserRole::from_slug(&role_slug).unwrap_or(UserRole::User),
             is_active: is_active != 0,
             created_at: row.get(5)?,
+            has_avatar: has_avatar != 0,
+        })
+    }
+
+    /// [`Self::map_row`] + хеш и lockout-поля (индексы 7..=10).
+    fn map_secret_row(row: &Row<'_>) -> rusqlite::Result<UserWithSecret> {
+        Ok(UserWithSecret {
+            user: Self::map_row(row)?,
+            password_hash: row.get(7)?,
+            failed_login_count: row.get(8)?,
+            last_failed_login_at: row.get(9)?,
+            locked_until: row.get(10)?,
         })
     }
 }
 
-const SELECT: &str = "SELECT id, login, display_name, role, is_active, created_at FROM users";
+/// Колонки без `avatar_data`: байты читаются только точечным запросом [`Self::avatar`].
+const SELECT: &str =
+    "SELECT id, login, display_name, role, is_active, created_at, (avatar_mime IS NOT NULL)
+     FROM users";
 
 impl UserRepository for SqliteUserRepo {
     fn create(
@@ -59,6 +75,7 @@ impl UserRepository for SqliteUserRepo {
             role,
             is_active: true,
             created_at: now,
+            has_avatar: false,
         })
     }
 
@@ -70,33 +87,28 @@ impl UserRepository for SqliteUserRepo {
             .map_err(Into::into)
     }
 
+    fn by_id_with_secret(&self, id: &str) -> AppResult<Option<UserWithSecret>> {
+        let conn = self.db.conn();
+        let sql = "SELECT id, login, display_name, role, is_active, created_at,
+             (avatar_mime IS NOT NULL), password_hash,
+             failed_login_count, last_failed_login_at, locked_until
+             FROM users WHERE id = ?1";
+        let row = conn
+            .query_row(sql, params![id], Self::map_secret_row)
+            .optional()?;
+        Ok(row)
+    }
+
     fn by_login(&self, login: &str) -> AppResult<Option<UserWithSecret>> {
         let conn = self.db.conn();
-        let sql = "SELECT id, login, display_name, role, is_active, created_at, password_hash,
+        let sql = "SELECT id, login, display_name, role, is_active, created_at,
+             (avatar_mime IS NOT NULL), password_hash,
              failed_login_count, last_failed_login_at, locked_until
              FROM users WHERE login = ?1";
         let row = conn
-            .query_row(sql, params![login], |row| {
-                Ok((
-                    Self::map_row(row)?,
-                    row.get::<_, String>(6)?,
-                    row.get::<_, i64>(7)?,
-                    row.get::<_, Option<String>>(8)?,
-                    row.get::<_, Option<String>>(9)?,
-                ))
-            })
+            .query_row(sql, params![login], Self::map_secret_row)
             .optional()?;
-        Ok(row.map(
-            |(user, password_hash, failed_login_count, last_failed_login_at, locked_until)| {
-                UserWithSecret {
-                    user,
-                    password_hash,
-                    failed_login_count,
-                    last_failed_login_at,
-                    locked_until,
-                }
-            },
-        ))
+        Ok(row)
     }
 
     fn list(&self) -> AppResult<Vec<User>> {
@@ -123,6 +135,56 @@ impl UserRepository for SqliteUserRepo {
             params![is_active as i32, chrono::Utc::now().to_rfc3339(), id],
         )?;
         Ok(())
+    }
+
+    fn update_profile(&self, id: &str, login: &str, display_name: Option<&str>) -> AppResult<()> {
+        let conn = self.db.conn();
+        conn.execute(
+            "UPDATE users SET login = ?1, display_name = ?2, updated_at = ?3 WHERE id = ?4",
+            params![login, display_name, chrono::Utc::now().to_rfc3339(), id],
+        )?;
+        Ok(())
+    }
+
+    fn update_password(&self, id: &str, password_hash: &str) -> AppResult<()> {
+        let conn = self.db.conn();
+        conn.execute(
+            "UPDATE users SET password_hash = ?1, updated_at = ?2 WHERE id = ?3",
+            params![password_hash, chrono::Utc::now().to_rfc3339(), id],
+        )?;
+        Ok(())
+    }
+
+    fn set_avatar(&self, id: &str, mime: &str, data: &[u8]) -> AppResult<()> {
+        let conn = self.db.conn();
+        conn.execute(
+            "UPDATE users SET avatar_mime = ?1, avatar_data = ?2, updated_at = ?3 WHERE id = ?4",
+            params![mime, data, chrono::Utc::now().to_rfc3339(), id],
+        )?;
+        Ok(())
+    }
+
+    fn clear_avatar(&self, id: &str) -> AppResult<()> {
+        let conn = self.db.conn();
+        conn.execute(
+            "UPDATE users SET avatar_mime = NULL, avatar_data = NULL, updated_at = ?1
+             WHERE id = ?2",
+            params![chrono::Utc::now().to_rfc3339(), id],
+        )?;
+        Ok(())
+    }
+
+    fn avatar(&self, id: &str) -> AppResult<Option<(String, Vec<u8>)>> {
+        let conn = self.db.conn();
+        let row = conn
+            .query_row(
+                "SELECT avatar_mime, avatar_data FROM users
+                 WHERE id = ?1 AND avatar_mime IS NOT NULL",
+                params![id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)),
+            )
+            .optional()?;
+        Ok(row)
     }
 
     fn delete(&self, id: &str) -> AppResult<()> {

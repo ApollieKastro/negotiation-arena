@@ -7,26 +7,13 @@ import {
 import { request, ApiError } from '../core/api.js';
 import { navigate } from '../core/router.js';
 import { accessToken } from '../core/store.js';
-import {
-  t, difficultyLabel, statusLabel, strategyLabel, spinLabel,
-} from '../core/i18n.js';
+import { messageNode, createChatFeed } from '../core/chat.js';
+import { t, difficultyLabel, statusLabel } from '../core/i18n.js';
 
 const DIFF_VARIANT = { easy: 'success', medium: 'warning', hard: 'danger' };
-const STRATEGY_VARIANT = {
-  collaboration: 'success',
-  compromise: 'warning',
-  confrontation: 'danger',
-};
 
-const BUBBLE_BASE = {
-  maxWidth: 'min(78%, 640px)',
-  padding: '10px 14px',
-  borderRadius: 'var(--radius-lg)',
-  fontSize: 'var(--fs-base)',
-  lineHeight: '1.5',
-  whiteSpace: 'pre-wrap',
-  wordBreak: 'break-word',
-};
+// Лимит веток на сессию — должен совпадать с MAX_BRANCHES на бэкенде.
+const MAX_BRANCHES = 16;
 
 let voice503Toasted = false;
 
@@ -36,30 +23,6 @@ function toastVoice503(message) {
   toast(message, 'error', 6000);
 }
 
-function deltaChip(delta) {
-  const n = Number(delta) || 0;
-  const cls = n > 0 ? 'badge-success' : n < 0 ? 'badge-danger' : 'badge-neutral';
-  const label = n > 0 ? `+${n}` : String(n);
-  return h(`span.badge.no-dot.${cls}`, { text: t('session.scoreChip', { n: label }) });
-}
-
-function strategyBadge(slug) {
-  if (!slug) return null;
-  return badge(
-    strategyLabel(slug) || slug,
-    STRATEGY_VARIANT[slug] || 'neutral',
-    { dot: false }
-  );
-}
-
-function spinBadge(code) {
-  if (!code) return null;
-  return h('span.badge.badge-info.no-dot', {
-    title: spinLabel(code) || code,
-    text: `SPIN ${code}`,
-  });
-}
-
 export function renderPage(root, params = {}) {
   const id = params.id;
   // Guard от гонки: страницу могли покинуть, пока летел запрос
@@ -67,6 +30,7 @@ export function renderPage(root, params = {}) {
   const isCurrent = () => marker.isConnected;
   let session = null;
   let scenario = null;
+  let branches = [];
   let spinByMsgId = new Map();
   let busy = false;
   let voiceOn = false;
@@ -96,6 +60,7 @@ export function renderPage(root, params = {}) {
           h('span.small.muted', null, t('session.score')),
           scoreEl,
           detailToggle,
+          h('button.btn.btn-secondary.btn-sm', { type: 'button', id: 'btn-call', text: t('call.button') }),
           h('button.btn.btn-danger.btn-sm', { type: 'button', id: 'btn-abandon', text: t('action.abandon') }),
           h('button.btn.btn-primary.btn-sm', { type: 'button', id: 'btn-finish', text: t('action.finish') }),
           h('button.btn.btn-secondary.btn-sm', { type: 'button', id: 'btn-result', text: t('action.result'), style: { display: 'none' } })
@@ -105,20 +70,12 @@ export function renderPage(root, params = {}) {
     )
   );
 
-  const feed = h('div', {
-    id: 'chat-feed',
-    style: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 'var(--sp-3)',
-      overflowY: 'auto',
-      padding: 'var(--sp-4)',
-      minHeight: '280px',
-      maxHeight: 'min(58vh, 640px)',
-      background: 'var(--surface-2)',
-      border: '1px solid var(--border)',
-      borderRadius: 'var(--radius-lg)',
-    },
+  const feed = createChatFeed();
+
+  // Панель переключения веток (видна при >1 ветке).
+  const branchesBar = h('div.row.mt-3', {
+    id: 'branches-bar',
+    style: { gap: 'var(--sp-2)', flexWrap: 'wrap', alignItems: 'center' },
   });
 
   const thinking = h('div.row', {
@@ -175,6 +132,7 @@ export function renderPage(root, params = {}) {
   const btnFinish = headerCard.querySelector('#btn-finish');
   const btnAbandon = headerCard.querySelector('#btn-abandon');
   const btnResult = headerCard.querySelector('#btn-result');
+  const btnCall = headerCard.querySelector('#btn-call');
   const titleEl = headerCard.querySelector('#session-title');
   const thinkingEl = composer.querySelector('#thinking');
 
@@ -199,9 +157,12 @@ export function renderPage(root, params = {}) {
     const infoBlock = (title, rows) => h('div.card', null,
       h('div.card-body.stack', { style: { gap: 'var(--sp-2)' } },
         h('div.card-title', { text: title }),
-        ...rows.map(([label, value]) => h('div.small', null,
-          h('span.muted', { text: `${label}: ` }),
-          h('span', { text: value || '—' })
+        ...rows.map(([label, value, hint]) => h('div.small', null,
+          h('span.muted', { text: `${label}: `, title: hint || undefined }),
+          h('span', { text: value || '—' }),
+          hint
+            ? h('div.small.muted', { style: { fontStyle: 'italic' }, text: hint })
+            : null
         ))
       )
     );
@@ -220,12 +181,13 @@ export function renderPage(root, params = {}) {
         [t('scenarios.role'), sc.player_role],
         [t('scenarios.company'), sc.player_company],
         [t('scenarios.goal'), sc.player_goal],
-        [t('scenarios.batna'), sc.player_batna],
+        [t('scenarios.batna'), sc.player_batna, t('scenarios.batnaHint')],
       ]),
       partner: infoBlock(t('scenarios.partner', { name: sc.partner_name }), [
         [t('scenarios.role'), sc.partner_role],
         [t('scenarios.company'), sc.partner_company],
         [t('scenarios.goal'), sc.partner_goal],
+        [t('scenarios.batna'), sc.partner_batna, t('scenarios.batnaHint')],
         [t('scenarios.personality'), personality],
       ]),
       company: infoBlock(t('session.context'), [
@@ -252,59 +214,139 @@ export function renderPage(root, params = {}) {
   }
 
   // ── Рендер сообщений ──
-  function messageNode(msg) {
-    const isPlayer = msg.role === 'player';
-    const wrap = h('div', {
-      dataset: { role: msg.role },
-      style: {
-        display: 'flex',
-        justifyContent: isPlayer ? 'flex-end' : 'flex-start',
-      },
+  const partnerLabel = () => (scenario ? scenario.partner_name : t('session.partner'));
+
+  function nodeFor(msg) {
+    return messageNode(msg, {
+      partnerName: partnerLabel(),
+      spin: spinByMsgId.get(msg.id) || null,
     });
-
-    const meta = [];
-    if (isPlayer) {
-      if (typeof msg.score_delta === 'number' && msg.score_delta !== 0) meta.push(deltaChip(msg.score_delta));
-      const sb = strategyBadge(msg.strategy);
-      if (sb) meta.push(sb);
-      const spin = spinByMsgId.get(msg.id);
-      if (spin) meta.push(spinBadge(spin));
-    }
-
-    const bubble = h('div', {
-      style: {
-        ...BUBBLE_BASE,
-        background: isPlayer ? 'var(--accent-soft)' : 'var(--surface-3)',
-        border: `1px solid ${isPlayer ? 'color-mix(in srgb, var(--accent) 35%, transparent)' : 'var(--border)'}`,
-        borderLeft: isPlayer ? '4px solid var(--accent)' : '4px solid var(--border-strong)',
-        textAlign: 'left',
-      },
-    },
-      !isPlayer
-        ? h('div.small.muted', { text: scenario ? scenario.partner_name : t('session.partner'), style: { marginBottom: '4px' } })
-        : null,
-      h('div', { text: msg.content }),
-      meta.length
-        ? h('div.row', { style: { gap: 'var(--sp-1)', marginTop: '6px' } }, ...meta)
-        : null
-    );
-
-    wrap.append(bubble);
-    return wrap;
   }
 
   function appendMessage(msg) {
-    feed.append(messageNode(msg));
+    feed.append(nodeFor(msg));
     feed.scrollTop = feed.scrollHeight;
   }
 
   function renderFeed(messages) {
-    feed.replaceChildren(...messages.map(messageNode));
+    feed.replaceChildren(...messages.map(nodeFor));
     feed.scrollTop = feed.scrollHeight;
   }
 
   function scrollFeed() {
     feed.scrollTop = feed.scrollHeight;
+  }
+
+  // ── Ветвление диалога ──
+  function branchName(branch, index) {
+    if (!branch) return '';
+    if (branch.label === 'main') return t('branches.main');
+    const n = typeof index === 'number' ? index + 1 : branches.indexOf(branch) + 1;
+    return t('branches.fork', { n: Math.max(n, 1) });
+  }
+
+  function renderBranches() {
+    if (!branches || branches.length < 2) {
+      branchesBar.replaceChildren();
+      branchesBar.style.display = 'none';
+      return;
+    }
+    branchesBar.style.display = '';
+    const chips = branches.map((b, i) => {
+      const name = branchName(b, i);
+      return h(`button.btn.btn-sm.${b.is_current ? 'btn-primary' : 'btn-ghost'}`, {
+        type: 'button',
+        text: name,
+        title: t('branches.hint', { name }),
+        onClick: () => doSwitch(b.id),
+      });
+    });
+    branchesBar.replaceChildren(
+      h('span.small.muted', { text: `${t('branches.title')}:` }),
+      ...chips
+    );
+  }
+
+  // Кнопки форка на репликах собеседника (модель: ветка — после partner-реплики).
+  function attachBranchButtons() {
+    feed.querySelectorAll('[data-fork]').forEach((el) => el.remove());
+    if (!session || session.status !== 'active' || branches.length >= MAX_BRANCHES) return;
+    const wraps = [...feed.children].filter((el) => el.dataset && el.dataset.role === 'partner');
+    wraps.forEach((wrap) => {
+      const msgId = wrap.dataset.msgId;
+      // Локальные (не серверные) реплики ветвить нельзя.
+      if (!msgId || msgId.startsWith('local-')) return;
+      const bubble = wrap.firstElementChild;
+      if (!bubble) return;
+      bubble.append(h('button.icon-btn', {
+        type: 'button',
+        'data-fork': '1',
+        title: t('branches.forkAction'),
+        text: '🔀',
+        style: { fontSize: '14px', verticalAlign: 'middle' },
+        onClick: () => doFork(msgId),
+      }));
+    });
+  }
+
+  // Перечитывает ветки и ленту текущей ветки (после форка/переключения).
+  async function reloadBranchesAndFeed() {
+    const [msgs, brs] = await Promise.all([
+      request(`/sessions/${id}/messages`),
+      request(`/sessions/${id}/branches`),
+    ]);
+    if (!isCurrent()) return;
+    branches = Array.isArray(brs) ? brs : [];
+    renderBranches();
+    renderFeed(Array.isArray(msgs) ? msgs : []);
+    attachTtsButtons();
+    attachBranchButtons();
+    updateHeader();
+  }
+
+  async function doFork(msgId) {
+    if (busy) return;
+    const ok = await confirmModal({
+      title: t('branches.forkTitle'),
+      message: t('branches.forkMsg'),
+      confirmText: t('branches.forkAction'),
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const res = await request(`/sessions/${id}/branches`, {
+        method: 'POST',
+        body: { after_message_id: msgId },
+      });
+      if (!isCurrent()) return;
+      session = res.session;
+      await reloadBranchesAndFeed();
+      toast(t('branches.forkOk'), 'success');
+    } catch (err) {
+      if (!isCurrent()) return;
+      toast(err instanceof ApiError ? err.message : t('branches.forkFail'), 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function doSwitch(branchId) {
+    if (busy) return;
+    const target = branches.find((b) => b.id === branchId);
+    if (target && target.is_current) return;
+    setBusy(true);
+    try {
+      const res = await request(`/sessions/${id}/branches/${branchId}`, { method: 'PUT' });
+      if (!isCurrent()) return;
+      session = res.session;
+      await reloadBranchesAndFeed();
+      toast(t('branches.switched', { name: branchName(res.branch) }), 'info');
+    } catch (err) {
+      if (!isCurrent()) return;
+      toast(err instanceof ApiError ? err.message : t('branches.switchFail'), 'error');
+    } finally {
+      setBusy(false);
+    }
   }
 
   // ── Обновление шапки ──
@@ -328,6 +370,7 @@ export function renderPage(root, params = {}) {
     micBtn.disabled = !active || busy || !voiceOn;
     btnFinish.style.display = active ? '' : 'none';
     btnAbandon.style.display = active ? '' : 'none';
+    btnCall.style.display = active ? '' : 'none';
     btnResult.style.display = active ? 'none' : '';
     if (!active) {
       textarea.placeholder = t('session.finishedPlaceholder');
@@ -384,6 +427,7 @@ export function renderPage(root, params = {}) {
       session = out.session;
       updateHeader();
       attachTtsButtons();
+      attachBranchButtons();
 
       const d = Number(out.player_score_delta) || 0;
       toast(
@@ -591,6 +635,7 @@ export function renderPage(root, params = {}) {
   });
 
   btnResult.addEventListener('click', () => navigate(`#/result/${id}`));
+  btnCall.addEventListener('click', () => navigate(`#/call/${id}`));
 
   // ── Загрузка ──
   root.replaceChildren(
@@ -607,10 +652,12 @@ export function renderPage(root, params = {}) {
   Promise.all([
     request(`/sessions/${id}`),
     request(`/sessions/${id}/messages`),
+    request(`/sessions/${id}/branches`).catch(() => []),
     request('/scenarios').catch(() => []),
-  ]).then(([s, messages, scenarios]) => {
+  ]).then(([s, messages, brs, scenarios]) => {
     if (!isCurrent()) return;
     session = s;
+    branches = Array.isArray(brs) ? brs : [];
     scenario = (scenarios || []).find((x) => x.id === s.scenario_id) || null;
     if (!scenario) {
       // fallback: одиночный GET
@@ -631,14 +678,17 @@ export function renderPage(root, params = {}) {
         )
       ),
       headerCard,
+      branchesBar,
       h('div.mt-4', null, feed),
       composer
     );
 
     renderDetails();
     updateHeader();
+    renderBranches();
     renderFeed(messages || []);
     attachTtsButtons();
+    attachBranchButtons();
     textarea.focus();
   }).catch((err) => {
     if (!isCurrent()) return;

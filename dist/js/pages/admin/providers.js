@@ -1,4 +1,4 @@
-// Провайдеры, модели, discovery и назначения ролей (llm/stt/tts)
+// Провайдеры, модели, локальные файлы, discovery и назначения ролей (llm/stt/tts)
 
 import { h } from '../../core/dom.js';
 import { request, ApiError } from '../../core/api.js';
@@ -26,6 +26,19 @@ function errMsg(err, fallback) {
   return err instanceof ApiError ? err.message : fallback;
 }
 
+function formatBytes(n) {
+  const num = Number(n) || 0;
+  if (num < 1024) return `${num} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let v = num;
+  let i = -1;
+  do {
+    v /= 1024;
+    i += 1;
+  } while (v >= 1024 && i < units.length - 1);
+  return `${v.toFixed(v >= 10 ? 0 : 1)} ${units[i]}`;
+}
+
 function kindBadge(kind) {
   const meta = KINDS.find((k) => k.value === kind);
   return badge(meta ? meta.label : kind, 'info');
@@ -38,6 +51,25 @@ function roleBadge(role) {
 
 function boolBadge(v, yes, no) {
   return v ? badge(yes, 'success') : badge(no, 'danger');
+}
+
+/** Поиск без учёта регистра: имя/ключ модели (или discovery-запись). */
+function matchModelQuery(m, q) {
+  if (!q) return true;
+  const hay = `${m.display_name || m.model_key || ''} ${m.model_key || ''} ${m.role || ''} ${m.name || ''}`.toLowerCase();
+  return hay.includes(q);
+}
+
+/** Строка поиска по моделям: searchModelsInput({ placeholder, onInput }) — onInput получает query в нижнем регистре. */
+function searchModelsInput({ placeholder = 'Поиск по названию или ключу…', onInput } = {}) {
+  const input = h('input.input', {
+    type: 'search',
+    placeholder,
+    'aria-label': placeholder,
+    style: { maxWidth: '260px', minWidth: '180px' },
+  });
+  input.addEventListener('input', () => onInput(String(input.value || '').trim().toLowerCase()));
+  return input;
 }
 
 function formModal({ title, body, submitLabel = 'Сохранить', wide = false, onSubmit }) {
@@ -70,24 +102,34 @@ export function renderPage(root, params = {}) {
   let providers = [];
   let models = [];
   let assignments = [];
+  let localFiles = [];
   let providerFilter = ''; // '' = все
+  let modelQuery = ''; // поиск в табе «Модели»
 
   const providersHost = h('div');
   const modelsHost = h('div');
+  const localHost = h('div');
   const assignHost = h('div');
+  const guideHost = h('div');
 
-  const panels = { providers: providersHost, models: modelsHost, assign: assignHost };
+  const panels = {
+    providers: providersHost, models: modelsHost, local: localHost, assign: assignHost, guide: guideHost,
+  };
   const tabsEl = tabs({
     items: [
       { id: 'providers', label: 'Провайдеры' },
       { id: 'models', label: 'Модели' },
+      { id: 'local', label: 'Локальные файлы' },
       { id: 'assign', label: 'Назначения ролей' },
+      { id: 'guide', label: 'Гайд' },
     ],
     active: 'providers',
     onChange: (id) => {
       for (const [key, el] of Object.entries(panels)) {
         el.classList.toggle('hidden', key !== id);
       }
+      if (id === 'local') loadLocalModels();
+      if (id === 'guide') renderGuide();
     },
   });
 
@@ -95,18 +137,21 @@ export function renderPage(root, params = {}) {
     h('div.page-header', null,
       h('div', null,
         h('h1', null, 'Провайдеры'),
-        h('div.page-sub', null, 'API-ключи, модели и назначения по ролям')
+        h('div.page-sub', null, 'API-ключи, модели, локальные файлы и назначения по ролям')
       )
     ),
     tabsEl,
-    h('div.mt-4', null, providersHost, modelsHost, assignHost)
+    h('div.mt-4', null, providersHost, modelsHost, localHost, assignHost, guideHost)
   );
 
   modelsHost.classList.add('hidden');
+  localHost.classList.add('hidden');
   assignHost.classList.add('hidden');
+  guideHost.classList.add('hidden');
 
   providersHost.append(skeleton(3));
   modelsHost.append(skeleton(3));
+  localHost.append(skeleton(3));
   assignHost.append(skeleton(3));
 
   async function loadAll() {
@@ -133,6 +178,18 @@ export function renderPage(root, params = {}) {
     } catch (err) {
       assignHost.replaceChildren(
         h('div.text-danger', { text: errMsg(err, 'Не удалось загрузить назначения') })
+      );
+    }
+    await loadLocalModels();
+  }
+
+  async function loadLocalModels() {
+    try {
+      localFiles = await request('/local-models');
+      renderLocalModels();
+    } catch (err) {
+      localHost.replaceChildren(
+        h('div.text-danger', { text: errMsg(err, 'Не удалось загрузить локальные файлы') })
       );
     }
   }
@@ -305,6 +362,8 @@ export function renderPage(root, params = {}) {
       options: MODEL_ROLES.map((r) => ({ value: r.value, label: r.title })),
     });
     const listHost = h('div.stack', null, h('div.small.muted', { text: 'Выберите роль и нажмите «Найти модели».' }));
+    let found = [];
+    let foundQuery = '';
     let m;
 
     const findBtn = h('button.btn.btn-secondary', { type: 'button', text: 'Найти модели' });
@@ -314,53 +373,17 @@ export function renderPage(root, params = {}) {
       findBtn.textContent = 'Ищем…';
       listHost.replaceChildren(skeleton(3));
       try {
-        const found = await request(`/providers/${provider.id}/discover`, {
+        found = await request(`/providers/${provider.id}/discover`, {
           query: { role: roleF.control.value },
         });
         if (!found.length) {
+          found = [];
           listHost.replaceChildren(h('div.small.muted', { text: 'Модели не найдены.' }));
           return;
         }
-        listHost.replaceChildren();
-        for (const d of found) {
-          const addBtn = h('button.btn.btn-primary.btn-sm', { type: 'button', text: 'Добавить' });
-          addBtn.addEventListener('click', async () => {
-            addBtn.disabled = true;
-            try {
-              await request('/models', {
-                method: 'POST',
-                body: {
-                  id: '',
-                  provider_id: provider.id,
-                  role: d.role,
-                  model_key: d.model_key,
-                  display_name: d.display_name || d.model_key,
-                  is_enabled: true,
-                  metadata: d.notes ? { notes: d.notes } : {},
-                  created_at: '',
-                },
-              });
-              addBtn.textContent = 'Добавлено ✓';
-              toast(`Модель ${d.display_name || d.model_key} добавлена`, 'success');
-              await loadModels();
-            } catch (err) {
-              addBtn.disabled = false;
-              toast(errMsg(err, 'Не удалось добавить модель'), 'error');
-            }
-          });
-          listHost.append(
-            h('div.row-between', { style: { padding: '6px 0', borderBottom: '1px solid var(--border)' } },
-              h('div', null,
-                h('div', { text: d.display_name || d.model_key }),
-                h('div.small.muted', { text: d.model_key })
-              ),
-              h('div.row', { style: { gap: '6px' } },
-                roleBadge(d.role),
-                addBtn
-              )
-            )
-          );
-        }
+        foundQuery = '';
+        if (searchHost) searchHost.hidden = false;
+        renderFound();
       } catch (err) {
         listHost.replaceChildren(h('div.text-danger', { text: errMsg(err, 'Discovery не удался') }));
         toast(errMsg(err, 'Discovery не удался'), 'error');
@@ -370,10 +393,70 @@ export function renderPage(root, params = {}) {
       }
     });
 
+    const searchHost = searchModelsInput({
+      placeholder: 'Поиск среди найденных моделей…',
+      onInput: (q) => {
+        foundQuery = q;
+        renderFound();
+      },
+    });
+    searchHost.hidden = true;
+
+    function renderFound() {
+      const visible = found.filter((d) => matchModelQuery(d, foundQuery));
+      if (!visible.length) {
+        listHost.replaceChildren(
+          h('div.small.muted', { text: foundQuery ? 'Ничего не найдено по запросу.' : 'Модели не найдены.' })
+        );
+        return;
+      }
+      listHost.replaceChildren();
+      for (const d of visible) {
+        const addBtn = h('button.btn.btn-primary.btn-sm', { type: 'button', text: 'Добавить' });
+        addBtn.addEventListener('click', async () => {
+          if (addBtn.disabled) return;
+          addBtn.disabled = true;
+          try {
+            await request('/models', {
+              method: 'POST',
+              body: {
+                id: '',
+                provider_id: provider.id,
+                role: d.role,
+                model_key: d.model_key,
+                display_name: d.display_name || d.model_key,
+                is_enabled: true,
+                metadata: d.notes ? { notes: d.notes } : {},
+                created_at: '',
+              },
+            });
+            addBtn.textContent = 'Добавлено ✓';
+            toast(`Модель ${d.display_name || d.model_key} добавлена`, 'success');
+            await loadModels();
+          } catch (err) {
+            addBtn.disabled = false;
+            toast(errMsg(err, 'Не удалось добавить модель'), 'error');
+          }
+        });
+        listHost.append(
+          h('div.row-between', { style: { padding: '6px 0', borderBottom: '1px solid var(--border)' } },
+            h('div', null,
+              h('div', { text: d.display_name || d.model_key }),
+              h('div.small.muted', { text: d.model_key })
+            ),
+            h('div.row', { style: { gap: '6px' } },
+              roleBadge(d.role),
+              addBtn
+            )
+          )
+        );
+      }
+    }
+
     const closeBtn = h('button.btn.btn-secondary', { type: 'button', text: 'Закрыть' });
     m = modal({
       title: `Discovery — ${provider.name}`,
-      body: h('div.stack', null, roleF, h('div', null, findBtn), listHost),
+      body: h('div.stack', null, roleF, h('div', null, findBtn), searchHost, listHost),
       actions: [closeBtn],
     });
     closeBtn.addEventListener('click', () => m.close());
@@ -391,48 +474,72 @@ export function renderPage(root, params = {}) {
     });
     filterSel.control.addEventListener('change', () => {
       providerFilter = filterSel.control.value;
-      loadModels();
+      renderModels();
     });
 
     const addBtn = h('button.btn.btn-primary', { type: 'button', text: '+ Добавить модель' });
     addBtn.addEventListener('click', () => openModelEditor(null));
 
-    const allModels = models;
-    const rows = providerFilter ? allModels.filter((m) => m.provider_id === providerFilter) : allModels;
+    const countHost = h('span.small.muted');
+    const tableHost = h('div');
 
-    const body = rows.length
-      ? table({
-          columns: [
-            { key: 'display_name', label: 'Название' },
-            { key: 'model_key', label: 'Ключ', mono: true },
-            { key: 'role', label: 'Роль', render: (m) => roleBadge(m.role) },
-            { key: 'is_enabled', label: 'Статус', render: (m) => boolBadge(m.is_enabled, 'включена', 'выключена') },
-            {
-              key: 'provider_id',
-              label: 'Провайдер',
-              render: (m) => {
-                const p = providers.find((x) => x.id === m.provider_id);
-                return p ? p.name : m.provider_id;
-              },
-            },
-            { key: 'actions', label: 'Действия', render: (m) => modelActions(m) },
-          ],
-          rows,
-          emptyText: 'Нет моделей',
-        })
-      : emptyState({
-          icon: '◈',
-          title: 'Моделей нет',
-          description: 'Добавьте модель вручную или найдите через Discovery у провайдера.',
-        });
+    function paintTable() {
+      const allModels = models;
+      let rows = providerFilter
+        ? allModels.filter((m) => m.provider_id === providerFilter)
+        : allModels;
+      if (modelQuery) rows = rows.filter((m) => matchModelQuery(m, modelQuery));
+      countHost.textContent = `${rows.length} из ${allModels.length}`;
+
+      tableHost.replaceChildren(
+        rows.length
+          ? table({
+              columns: [
+                { key: 'display_name', label: 'Название' },
+                { key: 'model_key', label: 'Ключ', mono: true },
+                { key: 'role', label: 'Роль', render: (m) => roleBadge(m.role) },
+                { key: 'is_enabled', label: 'Статус', render: (m) => boolBadge(m.is_enabled, 'включена', 'выключена') },
+                {
+                  key: 'provider_id',
+                  label: 'Провайдер',
+                  render: (m) => {
+                    const p = providers.find((x) => x.id === m.provider_id);
+                    return p ? p.name : m.provider_id;
+                  },
+                },
+                { key: 'actions', label: 'Действия', render: (m) => modelActions(m) },
+              ],
+              rows,
+              emptyText: modelQuery ? 'Ничего не найдено по запросу' : 'Нет моделей',
+            })
+          : emptyState({
+              icon: '◈',
+              title: modelQuery ? 'Ничего не найдено' : 'Моделей нет',
+              description: modelQuery
+                ? 'Измените поисковый запрос или фильтр провайдера.'
+                : 'Добавьте модель вручную или найдите через Discovery у провайдера.',
+            })
+      );
+    }
+
+    const searchInput = searchModelsInput({
+      placeholder: 'Поиск по названию или ключу…',
+      onInput: (q) => {
+        modelQuery = q;
+        paintTable();
+      },
+    });
+    searchInput.value = modelQuery;
+
+    paintTable();
 
     modelsHost.replaceChildren(
       h('div.card', null,
         h('div.card-header', null,
           h('div.card-title', { text: 'Модели' }),
-          h('div.row', null, filterSel, addBtn)
+          h('div.row', null, filterSel, searchInput, countHost, addBtn)
         ),
-        h('div.card-body', null, body)
+        h('div.card-body', null, tableHost)
       )
     );
   }
@@ -532,6 +639,309 @@ export function renderPage(root, params = {}) {
     });
   }
 
+  // ── Локальные файлы (MODELS_DIR) ──
+
+  function localProvider() {
+    return providers.find((p) => p.kind === 'local') || null;
+  }
+
+  function renderLocalModels() {
+    const sourceF = field({
+      label: 'URL или HuggingFace repo',
+      required: true,
+      placeholder: 'nvidia/nemotron-3.5-asr-streaming-0.6b',
+      hint: 'Прямой https://… URL файла, либо org/name на HuggingFace. Пример Nemotron ASR: repo nvidia/nemotron-3.5-asr-streaming-0.6b, filename nemotron-3.5-asr-streaming-0.6b.q8_0.gguf.',
+    });
+    const fileF = field({
+      label: 'Filename (для HF, необязательно)',
+      placeholder: 'model.q8_0.gguf',
+      hint: 'Пусто — скачать весь репозиторий через CLI hf. Скачивание больших файлов может занять минуты.',
+    });
+    const nameF = field({
+      label: 'Имя файла (необязательно)',
+      placeholder: 'voice.onnx',
+      hint: 'Только для URL; пусто — имя из последнего сегмента URL.',
+    });
+
+    const dlBtn = h('button.btn.btn-primary', { type: 'button', text: 'Скачать' });
+    dlBtn.addEventListener('click', async () => {
+      sourceF.setError('');
+      const source = sourceF.control.value.trim();
+      if (!source) {
+        sourceF.setError('Укажите URL или org/name');
+        return;
+      }
+      if (dlBtn.disabled) return;
+      dlBtn.disabled = true;
+      dlBtn.textContent = 'Скачиваем… (может занять время)';
+      try {
+        const body = { source };
+        const filename = fileF.control.value.trim();
+        if (filename) body.filename = filename;
+        const name = nameF.control.value.trim();
+        if (name) body.name = name;
+        const file = await request('/local-models/download', { method: 'POST', body });
+        toast(`Скачано: ${file.name} (${formatBytes(file.size_bytes)})`, 'success');
+        sourceF.control.value = '';
+        fileF.control.value = '';
+        nameF.control.value = '';
+        await loadLocalModels();
+        await loadModels();
+      } catch (err) {
+        toast(errMsg(err, 'Не удалось скачать модель'), 'error');
+      } finally {
+        dlBtn.disabled = false;
+        dlBtn.textContent = 'Скачать';
+      }
+    });
+
+    const refreshBtn = h('button.btn.btn-ghost.btn-sm', {
+      type: 'button',
+      text: 'Обновить',
+      onClick: () => loadLocalModels(),
+    });
+
+    let localQuery = '';
+    const localSearch = searchModelsInput({
+      placeholder: 'Поиск по имени файла…',
+      onInput: (q) => {
+        localQuery = q;
+        // перерисовать только таблицу файлов, не форму скачивания
+        renderLocalTable();
+      },
+    });
+
+    const tableHost = h('div');
+
+    function renderLocalTable() {
+      const all = localFiles;
+      const rows = localQuery ? all.filter((f) => matchModelQuery(f, localQuery)) : all;
+      const body = rows.length
+        ? table({
+            columns: [
+              { key: 'name', label: 'Файл', mono: true },
+              { key: 'role', label: 'Роль', render: (f) => roleBadge(f.role) },
+              {
+                key: 'size_bytes',
+                label: 'Размер',
+                render: (f) => h('span', { text: formatBytes(f.size_bytes) }),
+              },
+              { key: 'actions', label: 'Действия', render: (f) => localActions(f) },
+            ],
+            rows,
+            emptyText: localQuery ? 'Ничего не найдено по запросу' : 'Нет файлов',
+          })
+        : emptyState({
+            icon: '⬇',
+            title: localQuery ? 'Ничего не найдено' : 'Локальных файлов нет',
+            description: localQuery
+              ? 'Измените поисковый запрос.'
+              : 'Скачайте модель по URL или с HuggingFace, затем добавьте её как модель и назначьте роль stt/tts.',
+          });
+
+      tableHost.replaceChildren(
+        h('div.card', null,
+          h('div.card-header', null,
+            h('div.card-title', { text: 'Файлы в MODELS_DIR' }),
+            h('div.row', null, localSearch, badge(`${rows.length}`, 'info'))
+          ),
+          h('div.card-body', null, body)
+        )
+      );
+    }
+
+    localHost.replaceChildren(
+      h('div.card.mb-4', null,
+        h('div.card-header', null,
+          h('div.card-title', { text: 'Скачать локальную модель' }),
+          refreshBtn
+        ),
+        h('div.card-body', null,
+          h('div.stack', null, sourceF, fileF, nameF, h('div', null, dlBtn)),
+          h('div.small.muted.mt-3', {
+            text: 'После скачивания: «В модель…» → выбрать роль → в табе «Назначения ролей» указать активную. Python-зависимости: pip install -r scripts/requirements-voice.txt',
+          })
+        )
+      ),
+      tableHost
+    );
+    renderLocalTable();
+  }
+
+  function localActions(f) {
+    const asModelBtn = h('button.btn.btn-ghost.btn-sm', { type: 'button', text: 'В модель…' });
+    asModelBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openRegisterLocal(f);
+    });
+
+    const delBtn = h('button.btn.btn-danger.btn-sm', { type: 'button', text: 'Удалить' });
+    delBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const ok = await confirmModal({
+        title: 'Удалить файл?',
+        message: `«${f.name}» будет удалён с диска. Связанные модели могут перестать работать.`,
+        confirmText: 'Удалить',
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        await request('/local-models', {
+          method: 'DELETE',
+          query: { name: f.name },
+        });
+        toast('Файл удалён', 'success');
+        await loadLocalModels();
+        await loadModels();
+        await loadAssignments();
+      } catch (err) {
+        toast(errMsg(err, 'Не удалось удалить файл'), 'error');
+      }
+    });
+
+    return h('div.row', { style: { gap: '6px' } }, asModelBtn, delBtn);
+  }
+
+  function openRegisterLocal(f) {
+    const lp = localProvider();
+    if (!lp) {
+      toast('Сначала добавьте провайдера типа «Локальный»', 'warning');
+      return;
+    }
+    const roleF = field({
+      label: 'Роль', type: 'select', value: f.role || 'stt',
+      options: MODEL_ROLES.map((r) => ({ value: r.value, label: r.title })),
+    });
+    const nameF = field({ label: 'Отображаемое имя', value: f.name });
+    const keyF = field({ label: 'Ключ модели (путь)', value: f.name, disabled: true });
+
+    formModal({
+      title: 'Добавить локальную модель',
+      body: h('div.stack', null, roleF, nameF, keyF),
+      submitLabel: 'Добавить',
+      onSubmit: async () => {
+        await request('/models', {
+          method: 'POST',
+          body: {
+            id: '',
+            provider_id: lp.id,
+            role: roleF.control.value,
+            model_key: f.name,
+            display_name: nameF.control.value.trim() || f.name,
+            is_enabled: true,
+            metadata: { local: true, size_bytes: f.size_bytes },
+            created_at: '',
+          },
+        });
+        toast('Модель добавлена — назначьте её в табе «Назначения ролей»', 'success');
+        await loadModels();
+        await loadAssignments();
+        return true;
+      },
+    });
+  }
+
+  // ── Гайд: выбор моделей ──
+
+  function renderGuide() {
+    const section = (title, ...children) => h('div.card.mb-4', null,
+      h('div.card-body.stack', null,
+        h('div.card-title', { text: title }),
+        ...children
+      )
+    );
+    const rows = (items) => h('div.stack', null, ...items.map(([left, right]) =>
+      h('div.row-between', { style: { padding: '4px 0', borderBottom: '1px solid var(--border)' } },
+        h('span', { text: left }),
+        h('span.small.muted', { text: right })
+      )
+    ));
+    const steps = (...lines) => h('ol', { style: { margin: '0', paddingLeft: '1.2em' } },
+      ...lines.map((line) => h('li', { style: { marginBottom: '4px' }, text: line }))
+    );
+
+    const fullDoc = h('a.btn.btn-secondary.btn-sm', {
+      href: '/docs/MODELS_GUIDE.md',
+      target: '_blank',
+      rel: 'noopener',
+      text: 'Полный гайд (docs/MODELS_GUIDE.md)',
+    });
+
+    guideHost.replaceChildren(
+      section('Как это работает',
+        h('p', { text: 'Роли: LLM («голова» собеседника), STT (голос игрока → текст), TTS (текст → голос). Админ подключает провайдера и назначает роли; игрок в «Настройки → Модели» может выбрать свою модель, если список не пуст.' }),
+        h('div.small.muted', null, 'Без назначения LLM диалог отвечает 503 «Диалог не настроен»; без STT/TTS — «Голосовой сервис не настроен».')
+      ),
+      section('Где взять API-ключи (LLM)',
+        rows([
+          ['OpenAI', 'platform.openai.com/api-keys · gpt-4o-mini, gpt-4o'],
+          ['Groq', 'console.groq.com/keys · llama-3.3-70b-versatile · Base URL https://api.groq.com/openai/v1'],
+          ['OpenRouter', 'openrouter.ai/keys · один ключ → сотни моделей'],
+          ['Anthropic', 'console.anthropic.com/settings/keys · тип «Anthropic» (не OpenAI-compat)'],
+          ['Google Gemini', 'aistudio.google.com/apikey · тип «Google Gemini»'],
+          ['Ollama (без ключа)', 'ollama.com · Base URL http://127.0.0.1:11434/v1 · qwen3:4b, llama3.2:3b'],
+          ['Демо (mock)', 'Провайдер «Демо (офлайн)», модель demo-mock-llm — сид, без интернета'],
+        ]),
+        h('div.small.muted.mt-3', { text: 'Рекомендация для MVP: gpt-4o-mini или llama-3.3-70b через Groq/OpenRouter.' })
+      ),
+      section('STT — распознавание речи',
+        rows([
+          ['Groq', 'whisper-large-v3 / whisper-large-v3-turbo'],
+          ['OpenAI', 'whisper-1'],
+          ['Deepgram', 'nova-2 (тип Deepgram)'],
+          ['Локально (Nemotron)', 'HF nvidia/nemotron-3.5-asr-streaming-0.6b · filename nemotron-3.5-asr-streaming-0.6b.q8_0.gguf (или пусто — весь repo)'],
+          ['Локально (Whisper)', 'faster-whisper + веса CT2/ggml через URL или HF'],
+        ]),
+        steps(
+          'pip install -r scripts/requirements-voice.txt',
+          'Таб «Локальные файлы» → URL или org/name → «Скачать»',
+          '«В модель…» → роль stt → таб «Назначения ролей» → сохранить'
+        )
+      ),
+      section('TTS — озвучка собеседника',
+        rows([
+          ['ElevenLabs', 'elevenlabs.io → ключ · eleven_multilingual_v2 (лучший RU)'],
+          ['OpenAI', 'tts-1, tts-1-hd · голоса alloy, nova, shimmer'],
+          ['Groq', 'playai-tts (тот же ключ, что для LLM)'],
+          ['Deepgram', 'aura-2-thera (тип Deepgram)'],
+          ['Локально (Piper)', 'models/ru/ru_RU/irina/medium/…onnx · пакет piper-tts из requirements-voice.txt'],
+        ]),
+        h('div.small.muted', { text: 'Другой голос Piper: rhasspy/piper-voices → .onnx + .onnx.json → «Локальные файлы».' })
+      ),
+      section('Чек-лист подключения',
+        steps(
+          'Провайдеры → Добавить (тип, Base URL, ключ; для Local/Mock и localhost — ключ не нужен)',
+          'Ping — проверка соединения',
+          'Discovery — подтянуть модели по роли llm/stt/tts (или «Добавить модель» вручную)',
+          'Назначения ролей — выбрать активную модель для llm, stt, tts',
+          'Локальные файлы — при необходимости скачать и назначить (см. выше)'
+        )
+      ),
+      section('Частые ошибки',
+        rows([
+          ['503 «Диалог не настроен»', 'нет назначения llm или модель/провайдер выключены → Назначения ролей'],
+          ['503 «Голосовой сервис не настроен»', 'нет stt/tts → назначить роли'],
+          ['«Внешний сервис недоступен» / 502', 'неверный ключ/URL → Ping, проверить Base URL'],
+          ['STT: «pip install -r …»', 'нет Python-зависимостей → pip install -r scripts/requirements-voice.txt'],
+        ])
+      ),
+      section('Шпаргалка: что выбрать',
+        rows([
+          ['Демо за 2 минуты', 'Mock LLM, голос не нужен'],
+          ['Дешёвый умный диалог', 'Groq llama-3.3-70b или OpenAI gpt-4o-mini'],
+          ['Много моделей одним ключом', 'OpenRouter'],
+          ['Приватно и бесплатно (текст)', 'Ollama qwen3:4b / llama3.2:3b'],
+          ['Лучший русский голос', 'ElevenLabs eleven_multilingual_v2'],
+          ['Дешёвый облачный голос', 'OpenAI tts-1'],
+          ['Быстрый русский STT в облаке', 'Groq whisper-large-v3-turbo'],
+          ['Полностью локальный голос', 'Piper (TTS) + Nemotron ASR / faster-whisper (STT)'],
+        ]),
+        h('div.mt-3', null, fullDoc),
+        h('div.small.muted.mt-2', { text: 'Полный гайд: роли, base URL, env, ссылки на провайдеров.' })
+      )
+    );
+  }
+
   // ── Назначения ролей ──
 
   function renderAssignments() {
@@ -567,6 +977,41 @@ export function renderPage(root, params = {}) {
       ],
       disabled: !roleModels.length,
     });
+
+    let assignQuery = '';
+    const rebuildSelectOptions = () => {
+      const prev = sel.control.value;
+      const q = assignQuery;
+      const visible = roleModels.filter((m) => matchModelQuery(m, q));
+      sel.control.replaceChildren();
+      const emptyOpt = h('option', {
+        value: '',
+        text: !roleModels.length
+          ? 'нет моделей этой роли'
+          : !visible.length
+            ? 'ничего не найдено'
+            : '— не назначена —',
+      });
+      sel.control.append(emptyOpt);
+      for (const m of visible) {
+        sel.control.append(h('option', {
+          value: m.id,
+          text: `${m.display_name || m.model_key} (${m.model_key})${m.is_enabled ? '' : ' — выключена'}`,
+        }));
+      }
+      if ([...sel.control.options].some((o) => o.value === prev)) {
+        sel.control.value = prev;
+      } else if (roleModels.some((m) => m.id === current?.model_id)) {
+        sel.control.value = current.model_id;
+      }
+    };
+
+    const searchInput = roleModels.length > 4
+      ? searchModelsInput({
+          placeholder: 'Поиск модели…',
+          onInput: (q) => { assignQuery = q; rebuildSelectOptions(); },
+        })
+      : null;
 
     const saveBtn = h('button.btn.btn-primary.btn-sm', { type: 'button', text: 'Сохранить' });
     saveBtn.addEventListener('click', async () => {
@@ -619,6 +1064,7 @@ export function renderPage(root, params = {}) {
             ? `Сейчас: ${currentModel.display_name || currentModel.model_key}`
             : 'Сейчас: не назначена',
         }),
+        searchInput ? h('div.mt-3', null, searchInput) : null,
         h('div.row.mt-3', null, sel, saveBtn, clearBtn)
       )
     );

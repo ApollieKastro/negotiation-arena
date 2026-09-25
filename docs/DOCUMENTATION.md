@@ -52,11 +52,39 @@ abandon→  status=abandoned (без отчёта/XP)
 - Длина реплики: ≤ 4000 символов; пустая → 400.
 - Мутации (`turn`/`finish`/`abandon`) — только **владелец** сессии (`ensure_owner_strict`); админ читает чужие отчёты.
 
+#### Ветвление диалога
+
+Сессия — **дерево реплик**, а не линия: можно откатиться к реплике собеседника
+и пойти по альтернативному пути, не теряя прежний.
+
+- **Хранение** (миграция `0011`): таблица `session_branches` — у каждой ветки
+  `parent_id` (форк от какой ветки), `fork_turn_index` (точка ветвления) и
+  **снапшот метрик** (`metrics`/`total_score`/`turn_count`); реплики принадлежат
+  ветке (`session_messages.branch_id`). Ровно одна текущая ветка на сессию
+  (частичный UNIQUE-индекс `is_current`), `sessions.*` всегда отражает её.
+  Main-ветка создаётся вместе с сессией (`id` ветки = `id` сессии); старые данные
+  привязываются бэкфиллом в той же миграции.
+- **Форк** (`SessionService::create_branch`): копирует префикс реплик ветки-источника
+  до точки ветвления в **новую** ветку (свои id), пересчитывает метрики в этой точке
+  (`replay_metrics` — детерминированный `analyze` + `apply_analysis` по player-репликам
+  префикса), делает ветку текущей — сессия «откатывается» к точке. Всё — одной
+  транзакцией (`fork_branch`).
+- **Ограничения**: только `active`-сессия; только **partner-реплика** (иначе два
+  хода игрока подряд без ответа); ≤ `MAX_BRANCHES` (16) веток; мутации — только
+  владелец. Переключение (`switch_branch`) подставляет снапшот ветки в сессию.
+- **LLM не замечает ветвления**: ей отдаётся линейная история текущей ветки.
+- **UI**: панель веток (чипы) и кнопка «🔀» на репликах собеседника в
+  `dist/js/pages/session.js`.
+
 ### 2.2 System prompt собеседника
 
 Собирается из сценария (`SessionService::system_prompt`):
 
-- роль, имя, компания, цели, BATNA, цель игрока (вслух не называть);
+- роль, имя, компания, цели, **BATNA**, цель игрока (вслух не называть);
+- **Лучшая альтернатива (BATNA)** — что получите, если договориться не удастся:
+  `player_batna` / `partner_batna` из сценария попадают в промпт отдельными строками
+  («Твоя лучшая альтернатива (BATNA): …», «Лучшая альтернатива игрока (BATNA): …»); на `hard` собеседник использует её как рычаг;
+  в UI расшифровка — `scenarios.batnaHint`;
 - **сложность** (`easy`/`medium`/`hard`) — блоки поведения:
   - easy: уступает после 1–2 убедительных аргументов, простая лексика;
   - medium: уступает только после чисел/фактов, держит позицию 2–3 реплики;
@@ -173,11 +201,16 @@ docker compose up -d
 | POST | `/api/v1/sessions` | user |
 | GET | `/api/v1/sessions/:id`, `/messages`, `/report` | owner/admin |
 | POST | `/api/v1/sessions/:id/{turn,finish,abandon}` | **owner only** |
+| GET/POST | `/api/v1/sessions/:id/branches` | owner → дерево / форк (201) |
+| PUT | `/api/v1/sessions/:id/branches/:branch_id` | **owner only** → переключение |
+| GET | `/api/v1/sessions/:id/messages?branch_id=` | owner/admin (без параметра — текущая ветка) |
 | GET | `/api/v1/sessions?limit=&offset=` | user → `{items,total,…}` |
 | GET | `/api/v1/stats/me`, `/stats/leaderboard` | user / admin |
 | GET/PUT/DELETE | `/api/v1/settings/me/{key}`, `/settings/me` | user |
 | GET/PUT/DELETE | `/api/v1/model-preferences/…` | user |
 | POST | `/api/v1/voice/{tts,stt}` | user, roles |
+| GET/DELETE | `/api/v1/local-models` (`?name=` для DELETE) | admin |
+| POST | `/api/v1/local-models/download` `{source, filename?, name?}` | admin |
 | CRUD | `/api/v1/admin/…`, providers, assignments, audit | admin |
 
 ---
@@ -199,6 +232,8 @@ docker compose up -d
 | `LOGIN_LOCKOUT_*` | lockout неудачных входов; `0`=off | `5`/`900`/`900` |
 | `DB_PATH` | файл SQLite | `negotiation_arena.db` |
 | `MODELS_DIR` | локальные STT/TTS | `models` |
+| `LOCAL_PYTHON` | python для `scripts/local_*.py` | `python3` |
+| `LOCAL_STT_SCRIPT` / `LOCAL_TTS_SCRIPT` | пути к скриптам | `scripts/local_*.py` |
 | `RUST_LOG` | tracing filter | — |
 
 **Глобальные настройки БД** (админка): `platform.site_name`, `platform.default_theme`, `platform.default_font_size`, `platform.default_locale`, `platform.max_turns`, `platform.llm_daily_token_limit` (0=off → 429 при исчерпании).
@@ -226,7 +261,9 @@ docker compose up -d
 ### 6.2 Внешние сервисы (подключаемые, не обязательны)
 
 - **LLM:** OpenAI-совместимые, Anthropic, Gemini, Groq, локальные, **Mock** (встроенный).
-- **STT/TTS:** OpenAI, Groq, ElevenLabs, Deepgram, локальные модели (`MODELS_DIR`).
+- **STT/TTS:** OpenAI, Groq, ElevenLabs, Deepgram, локальные модели (`MODELS_DIR`: URL/HF → админка «Локальные файлы», инференс через `scripts/local_*.py`).
+
+Где взять ключи, base URL, какие модели выбрать (LLM/STT/TTS, облако и локально) и чек-лист подключения — [MODELS_GUIDE.md](MODELS_GUIDE.md).
 
 ### 6.3 Фронтенд
 
@@ -246,5 +283,6 @@ CI: `.github/workflows/ci.yml` (push/PR → `main`, `dev`, `feature/**`).
 ## 7. Ограничения (честный scope)
 
 - Админ-UI и тексты ошибок API — только русский.
-- Ветвление диалога, публичный деплой, презентация — вне текущего контура агента (см. CONCEPT §6).
-- Локальные STT/TTS binary — каталог/менеджер есть, полный runtime — deferred.
+- Публичный деплой, презентация — вне текущего контура агента (см. CONCEPT §6).
+  Ветвление диалога реализовано (см. §2.1).
+- Локальный STT/TTS: subprocess + Python (`pip install -r scripts/requirements-voice.txt`); без зависимостей — понятная ошибка 502/503. GGUF Nemotron — через `nemo-speech` или HF-каталог с `config.json` (transformers).

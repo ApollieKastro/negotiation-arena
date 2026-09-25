@@ -34,7 +34,7 @@ impl UserRole {
     }
 }
 
-/// Пользователь (без секретов — пароль хранится отдельно).
+/// Пользователь (без секретов — пароль и аватар хранятся отдельно).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     pub id: String,
@@ -43,6 +43,9 @@ pub struct User {
     pub role: UserRole,
     pub is_active: bool,
     pub created_at: String,
+    /// Есть ли загруженный аватар (байты не отдаются в JSON — только endpoint).
+    #[serde(default)]
+    pub has_avatar: bool,
 }
 
 /// Пользователь вместе с хешем пароля и состоянием lockout.

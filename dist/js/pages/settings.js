@@ -1,22 +1,10 @@
 // Настройки: внешний вид, язык, модели, звук, профиль
 
 import { h } from '../core/dom.js';
-import { field, toast, spinner, emptyState } from '../core/components.js';
+import { field, toast, spinner, emptyState, sectionCard } from '../core/components.js';
 import { request, ApiError } from '../core/api.js';
 import * as store from '../core/store.js';
 import { t, getLocale, LOCALES } from '../core/i18n.js';
-
-function sectionCard(title, description, ...children) {
-  return h('div.card.mt-4', null,
-    h('div.card-body.stack', { style: { gap: 'var(--sp-4)' } },
-      h('div.stack', { style: { gap: '2px' } },
-        h('div.card-title', { text: title }),
-        description ? h('div.small.muted', { text: description }) : null
-      ),
-      ...children
-    )
-  );
-}
 
 export function renderPage(root, params = {}) {
   const u = store.user() || {};
@@ -117,20 +105,18 @@ export function renderPage(root, params = {}) {
     }
   });
 
-  // ── Профиль (read-only) ──
-  const loginF = field({
-    label: t('settings.login'),
-    value: u.login || '',
-    disabled: true,
-    hint: t('settings.loginHint'),
-  });
-  const nameF = field({
-    label: t('settings.displayName'),
-    value: u.display_name || '',
-    placeholder: t('settings.displayNamePlaceholder'),
-    disabled: true,
-    hint: t('settings.displayNameHint'),
-  });
+  // ── Профиль: сводка + переход на отдельную страницу ──
+  const profileSummary = h('div.stack', { style: { gap: '4px' } },
+    h('div', null,
+      h('span.muted', { text: `${t('settings.login')}: ` }),
+      h('strong', { text: u.login || '—' })
+    ),
+    h('div', null,
+      h('span.muted', { text: `${t('settings.displayName')}: ` }),
+      h('strong', { text: u.display_name || t('profile.displayNamePlaceholder') })
+    ),
+    h('div.small.muted', { text: t('settings.profileEditHint') })
+  );
 
   // ── Модели ──
   const modelsHost = h('div.stack');
@@ -141,6 +127,44 @@ export function renderPage(root, params = {}) {
     { role: 'tts', label: t('settings.modelRole.tts') },
     { role: 'stt', label: t('settings.modelRole.stt') },
   ];
+
+  /** Короткий гайд по ролям моделей (для игрока) */
+  function modelsGuide() {
+    const roles = h('div.stack', { style: { gap: '4px' } },
+      h('div.small', null, t('settings.guideRoleLlm')),
+      h('div.small', null, t('settings.guideRoleStt')),
+      h('div.small', null, t('settings.guideRoleTts'))
+    );
+    const tips = h('div.stack', { style: { gap: '4px' } },
+      h('div.small', null, t('settings.guideTipGlobal')),
+      h('div.small', null, t('settings.guideTipAdmin')),
+      h('div.small', null, t('settings.guideTipEmpty'))
+    );
+    const docLink = h('div.small', null,
+      h('a', {
+        href: '/docs/MODELS_GUIDE.md',
+        target: '_blank',
+        rel: 'noopener',
+        text: t('settings.guideFull'),
+      })
+    );
+    return h('details', {
+      style: {
+        border: '1px dashed var(--border-strong)',
+        borderRadius: 'var(--radius-md)',
+        padding: '8px 12px',
+        marginBottom: 'var(--sp-3)',
+      },
+    },
+      h('summary', { style: { cursor: 'pointer', fontWeight: '600' }, text: t('settings.guideTitle') }),
+      h('div.stack.mt-2', { style: { gap: 'var(--sp-2)' } },
+        h('div.card-title', { style: { fontSize: 'var(--fs-sm)' }, text: t('settings.guideRoles') }),
+        roles,
+        tips,
+        docLink
+      )
+    );
+  }
 
   root.replaceChildren(
     marker,
@@ -155,6 +179,7 @@ export function renderPage(root, params = {}) {
       themeF, fontF, langF, preview),
 
     sectionCard(t('settings.models'), t('settings.modelsDesc'),
+      modelsGuide(),
       modelsHost),
 
     sectionCard(t('settings.sound'), t('settings.soundDesc'),
@@ -164,7 +189,10 @@ export function renderPage(root, params = {}) {
       )),
 
     sectionCard(t('settings.profile'), t('settings.profileDesc'),
-      loginF, nameF),
+      profileSummary,
+      h('div.row', null,
+        h('a.btn.btn-secondary.btn-sm', { href: '#/profile' }, t('profile.open'))
+      )),
 
     sectionCard(t('team.title'), t('team.settingsDesc'),
       h('div.row', null,
@@ -225,7 +253,34 @@ export function renderPage(root, params = {}) {
       });
 
       let selectF;
+      let searchF;
       if (opts.length) {
+        const rebuildOptions = (query) => {
+          const q = (query || '').trim().toLowerCase();
+          const visible = opts.filter((m) => {
+            if (!q) return true;
+            const hay = `${m.display_name || ''} ${m.model_key || ''}`.toLowerCase();
+            return hay.includes(q);
+          });
+          const prev = selectF.control.value;
+          selectF.control.replaceChildren();
+          selectF.control.append(h('option', { value: '', text: t('settings.globalOption') }));
+          for (const m of visible) {
+            selectF.control.append(h('option', {
+              value: m.id,
+              text: m.display_name || m.model_key,
+            }));
+          }
+          if ([...selectF.control.options].some((o) => o.value === prev)) {
+            selectF.control.value = prev;
+          } else if (current && visible.some((m) => m.id === current.model_id)) {
+            selectF.control.value = current.model_id;
+          }
+          if (searchEmpty) {
+            searchEmpty.hidden = visible.length > 0 || !q;
+          }
+        };
+
         selectF = field({
           label: t('settings.customModelLabel', { role: label }),
           type: 'select',
@@ -238,6 +293,20 @@ export function renderPage(root, params = {}) {
             ? t('settings.assignedTo', { name: current.model_display_name || current.model_id })
             : t('settings.useAdminAssign'),
         });
+
+        let searchEmpty;
+        if (opts.length > 4) {
+          const searchInput = h('input.input', {
+            type: 'search',
+            placeholder: t('settings.modelsSearch'),
+            'aria-label': t('settings.modelsSearch'),
+            style: { maxWidth: '260px' },
+          });
+          searchEmpty = h('div.small.muted', { text: t('settings.modelsSearchEmpty'), hidden: true });
+          searchInput.addEventListener('input', () => rebuildOptions(searchInput.value));
+          searchF = h('div.stack', { style: { gap: '4px' } }, searchInput, searchEmpty);
+        }
+
         selectF.control.addEventListener('change', async () => {
           const modelId = selectF.control.value;
           selectF.setError('');
@@ -265,6 +334,7 @@ export function renderPage(root, params = {}) {
           h('div.card-body.stack', { style: { gap: 'var(--sp-3)' } },
             h('div.card-title', { text: label }),
             currentLine,
+            searchF || null,
             selectF || h('div.small.muted', { text: t('settings.freePick') }),
             h('div.row', null, resetBtn)
           )

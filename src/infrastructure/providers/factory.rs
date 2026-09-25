@@ -15,6 +15,7 @@ use super::deepgram::Deepgram;
 use super::elevenlabs::ElevenLabs;
 use super::gemini::Gemini;
 use super::local::{LocalCatalog, LocalModelManager};
+use super::local_voice::{LocalSpeechToText, LocalTextToSpeech};
 use super::mock::MockChat;
 use super::openai_compat::OpenAiCompat;
 
@@ -152,9 +153,17 @@ impl ProviderFactory {
                 handle.catalog = Some(adapter);
             }
             ProviderKind::Local => {
-                // Вызовы whisper/Piper подключаются на этапе 7 — пока только каталог.
+                // Локальный каталог + subprocess STT/TTS (scripts/local_*.py).
                 let manager = LocalModelManager::new(self.models_dir.clone(), self.http.clone());
                 handle.catalog = Some(Arc::new(LocalCatalog::new(manager)));
+                handle.stt = Some(Arc::new(LocalSpeechToText::new(
+                    self.models_dir.clone(),
+                    provider.name.clone(),
+                )));
+                handle.tts = Some(Arc::new(LocalTextToSpeech::new(
+                    self.models_dir.clone(),
+                    provider.name.clone(),
+                )));
             }
             ProviderKind::Mock => {
                 // Офлайн-режим: ключ не нужен, chat + catalog для демо и разработки.
@@ -243,14 +252,14 @@ mod tests {
     }
 
     #[test]
-    fn local_needs_no_key_and_has_catalog_only() {
+    fn local_needs_no_key_and_exposes_stt_tts_catalog() {
         let factory = ProviderFactory::new("models").unwrap();
         let handle = factory
             .build(&provider(ProviderKind::Local, true), None)
             .unwrap();
         assert!(handle.chat.is_none());
-        assert!(handle.stt.is_none());
-        assert!(handle.tts.is_none());
+        assert!(handle.stt.is_some());
+        assert!(handle.tts.is_some());
         assert!(handle.catalog.is_some());
     }
 

@@ -256,7 +256,11 @@ export function renderPage(root, params = {}) {
     const playerRoleF = field({ label: 'Роль игрока', required: true, value: src?.player_role || '' });
     const playerCompanyF = field({ label: 'Компания игрока', value: src?.player_company || '' });
     const playerGoalF = field({ label: 'Цель игрока', required: true, value: src?.player_goal || '' });
-    const playerBatnaF = field({ label: 'BATNA игрока', value: src?.player_batna || '' });
+    const playerBatnaF = field({
+      label: 'Лучшая альтернатива игрока (BATNA)',
+      value: src?.player_batna || '',
+      hint: 'Что получит игрок, если сделки не будет (например: «Уйти к конкуренту»).',
+    });
 
     const partnerNameF = field({ label: 'Имя собеседника', required: true, value: src?.partner_name || '' });
     const partnerRoleF = field({ label: 'Должность собеседника', required: true, value: src?.partner_role || '' });
@@ -267,7 +271,11 @@ export function renderPage(root, params = {}) {
       type: 'textarea', rows: 3,
       value: (src?.partner_goals || []).join('\n'),
     });
-    const partnerBatnaF = field({ label: 'BATNA собеседника', value: src?.partner_batna || '' });
+    const partnerBatnaF = field({
+      label: 'Лучшая альтернатива собеседника (BATNA)',
+      value: src?.partner_batna || '',
+      hint: 'Куда уйдёт собеседник без сделки; на hard-сложности использует это как рычаг.',
+    });
 
     const toneF = field({ label: 'Тон', value: src?.partner_personality?.tone || '' });
     const styleF = field({ label: 'Манера', value: src?.partner_personality?.style || '' });

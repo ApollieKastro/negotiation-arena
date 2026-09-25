@@ -151,6 +151,10 @@ pub(crate) fn matches_role(model_key: &str, role: ModelRole) -> bool {
                 || key.contains("transcribe")
                 || key.contains("paraformer")
                 || key.contains("distil-whisper")
+                || key.contains("nemotron")
+                || key.contains("parakeet")
+                || key.contains("asr")
+                || key.contains("fastconformer")
         }
         ModelRole::Tts => {
             key.contains("tts")

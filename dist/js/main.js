@@ -10,8 +10,11 @@ import * as loginPage from './pages/login.js';
 import * as homePage from './pages/home.js';
 import * as scenariosPage from './pages/scenarios.js';
 import * as sessionPage from './pages/session.js';
+import * as callPage from './pages/call.js';
+import * as dialogPage from './pages/dialog.js';
 import * as resultPage from './pages/result.js';
 import * as settingsPage from './pages/settings.js';
+import * as profilePage from './pages/profile.js';
 import * as historyPage from './pages/history.js';
 import * as leaderboardPage from './pages/leaderboard.js';
 import * as teamPage from './pages/team.js';
@@ -35,8 +38,11 @@ const ROUTES = [
   { pattern: '/', page: homePage, access: 'user', titleKey: 'nav.home' },
   { pattern: '/scenarios', page: scenariosPage, access: 'user', titleKey: 'scenarios.title' },
   { pattern: '/session/:id', page: sessionPage, access: 'user', titleKey: 'session.title' },
+  { pattern: '/call/:id', page: callPage, access: 'user', titleKey: 'call.title' },
+  { pattern: '/dialog/:id', page: dialogPage, access: 'user', titleKey: 'dialog.title' },
   { pattern: '/result/:id', page: resultPage, access: 'user', titleKey: 'result.title' },
   { pattern: '/settings', page: settingsPage, access: 'user', titleKey: 'settings.title' },
+  { pattern: '/profile', page: profilePage, access: 'user', titleKey: 'profile.title' },
   { pattern: '/settings/team', page: teamPage, access: 'user', titleKey: 'team.title' },
   { pattern: '/history', page: historyPage, access: 'user', titleKey: 'history.title' },
   { pattern: '/leaderboard', page: leaderboardPage, access: 'user', titleKey: 'leaderboard.title' },
@@ -120,7 +126,7 @@ function ensureShell() {
       store.isAdmin() ? buildNavGroup(t('nav.admin'), navAdmin()) : null
     ),
     h('div.sidebar-footer', null,
-      h('div.user-card', null,
+      h('a.user-card', { href: '#/profile', title: t('profile.title') },
         avatar(u),
         h('div.user-card-meta', null,
           h('div.user-card-name', { text: u.display_name || u.login || '—' }),
@@ -154,6 +160,7 @@ function ensureShell() {
       h('strong', { text: u.display_name || u.login || '—' }),
       h('span', { text: u.role === 'admin' ? t('role.admin') : t('role.user') })
     ),
+    h('a.menu-item', { href: '#/profile' }, t('menu.profile')),
     h('a.menu-item', { href: '#/settings' }, t('menu.settings')),
     h('a.menu-item', { href: '#/settings/team' }, t('menu.team')),
     h('button.menu-item.danger', { type: 'button', onClick: logout }, t('menu.logout'))
@@ -302,6 +309,12 @@ window.addEventListener('locale-changed', () => {
     r.page.renderPage(s.main, {});
     updateActiveNav(path);
   }
+});
+
+// ── Обновление профиля (логин/имя/аватар): shell перечитывает store.user ──
+window.addEventListener('user-updated', () => {
+  destroyShell();
+  navigate(`#${currentPath()}`, { replace: true });
 });
 
 // ── Старт ──
