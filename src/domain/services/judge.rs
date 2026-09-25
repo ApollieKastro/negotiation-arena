@@ -1,10 +1,15 @@
 //! LLM-оценка реплики игрока («судья») поверх эвристики.
 //!
 //! Отдельный короткий запрос к уже назначенной LLM-модели: модель ставит три
-//! оценки 0–10 (стратегия, аргументация, тон), после чего баллы хода
-//! смешиваются с ключевыми словами [`analysis::analyze`]:
+//! оценки 0–10 (стратегия, аргументация, тон) и классифицирует стратегию
+//! реплики (`category`), после чего баллы хода смешиваются с ключевыми
+//! словами [`analysis::analyze`]:
 //! `round((1 - w) * эвристика + w * LLM)`, доля `w` — [`DEFAULT_WEIGHT`]
 //! (настраивается `scoring.llm_judge_weight`).
+//!
+//! Категория стратегии берётся у модели, а не у эвристики: подпись под
+//! баллом («Сотрудничество» / «Компромисс» / «Конфронтация») меняется от
+//! реплики к реплике по решению судьи.
 //!
 //! Модуль чистый (без I/O): только промпт, разбор ответа и смешивание.
 //! Сетевая ошибка, таймаут, исчерпанная квота и неразборчивый JSON
@@ -15,11 +20,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::entities::scenario::Scenario;
 use crate::domain::entities::session::{MessageRole, SessionMessage};
+use crate::domain::services::analysis::Strategy;
 
 /// Доля LLM-оценки в итоге по умолчанию: 40% LLM / 60% эвристика.
 pub const DEFAULT_WEIGHT: f32 = 0.4;
 
-/// Оценка судьи по трём шкалам, целые 0–10.
+/// Оценка судьи: три шкалы 0–10 и классификация стратегии реплики.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JudgeScores {
     /// Стратегия переговоров: 0 — давление/уход, 10 — работа с интересами.
@@ -28,21 +34,38 @@ pub struct JudgeScores {
     pub argument: u8,
     /// Тон: 0 — грубо и давит, 10 — уважительно и делово.
     pub tone: u8,
+    /// Какая стратегия **проявлена в реплике** (`collaboration` /
+    /// `compromise` / `confrontation`) — этим определяется подпись под баллом.
+    /// `None` — модель не назвала категорию, тогда берётся эвристика.
+    pub category: Option<Strategy>,
 }
 
-/// Сырой ответ модели: числа берём как есть и обрезаем до 0..=10.
+/// Сырой ответ модели: числа берём как есть и обрезаем до 0..=10,
+/// категория — произвольная строка (распознаём в [`parse_category`]).
 #[derive(Debug, Deserialize)]
 struct RawJudge {
     strategy: i32,
     argument: i32,
     tone: i32,
+    #[serde(default)]
+    category: Option<String>,
+}
+
+/// Распознаёт категорию стратегии: слаги и русские названия.
+fn parse_category(raw: &str) -> Option<Strategy> {
+    match raw.trim().to_lowercase().as_str() {
+        "collaboration" | "сотрудничество" => Some(Strategy::Collaboration),
+        "compromise" | "компромисс" => Some(Strategy::Compromise),
+        "confrontation" | "конфронтация" => Some(Strategy::Confrontation),
+        _ => None,
+    }
 }
 
 /// System-prompt судьи: строгий JSON, без пояснений.
 pub const SYSTEM_PROMPT: &str = "Ты — судья в тренажёре деловых переговоров. \
 Ты оцениваешь ОДНУ последнюю реплику игрока, а не весь диалог.\n\
 Оцени по трём шкалам целыми числами от 0 до 10:\n\
-- strategy: стратегия переговоров — 0: давление, ультиматум, уход от диалога; \
+- strategy: качество стратегии — 0: давление, ультиматум, уход от диалога; \
 5: торг и уступки без выяснения интересов; 10: работа с интересами обеих сторон, \
 поиск взаимовыгодных решений, опора на критерии.\n\
 - argument: аргументация — 0: голое мнение без обоснования; \
@@ -50,8 +73,13 @@ pub const SYSTEM_PROMPT: &str = "Ты — судья в тренажёре де�
 объективные критерии и данные.\n\
 - tone: тон — 0: грубо, давит на собеседника; 5: нейтрально-деловой; \
 10: уважительно, с эмпатией, без агрессии.\n\n\
+Дополнительно классифицируй, какая стратегия ПРОЯВЛЕНА в этой реплике, \
+и укажи её в category строго одним из трёх значений:\n\
+- \"collaboration\" — открытые вопросы, интересы, поиск взаимовыгоды, данные и варианты;\n\
+- \"compromise\" — делёжка и уступки, частичные договорённости, «пойдём навстречу», без поиска интересов;\n\
+- \"confrontation\" — давление, ультиматумы, отрицание, оспаривание, грубость, отказ обсуждать.\n\n\
 Верни СТРОГО один JSON-объект и ничего больше, без markdown-блоков и пояснений:\n\
-{\"strategy\": 7, \"argument\": 6, \"tone\": 8}";
+{\"strategy\": 7, \"argument\": 6, \"tone\": 8, \"category\": \"collaboration\"}";
 
 /// Строит user-prompt судьи: краткий контекст сценария + хвост диалога
 /// + реплика игрока, которую нужно оценить.
@@ -100,11 +128,13 @@ fn truncate(text: &str, max: usize) -> String {
     format!("{cut}…")
 }
 
-/// Разбирает ответ судьи: первый JSON-объект с тремя оценками.
+/// Разбирает ответ судьи: первый JSON-объект с тремя оценками и категорией.
 ///
 /// Понимает ответ с префиксом («Оценка: {...}») и markdown-блоками; числа
-/// вне 0..=10 обрезаются до границ. Не нашёл JSON или поля — `None`,
-/// вызывающая сторона считает ход на эвристике.
+/// вне 0..=10 обрезаются до границ, категория распознаётся по слагам и
+/// русским названиям (неизвестная → `None`, тогда категория берётся с
+/// эвристики). Не нашёл JSON или поля — `None`, вызывающая сторона
+/// считает ход на эвристике.
 pub fn parse(raw: &str) -> Option<JudgeScores> {
     let start = raw.find('{')?;
     let rest = &raw[start..];
@@ -114,6 +144,7 @@ pub fn parse(raw: &str) -> Option<JudgeScores> {
         strategy: parsed.strategy.clamp(0, 10) as u8,
         argument: parsed.argument.clamp(0, 10) as u8,
         tone: parsed.tone.clamp(0, 10) as u8,
+        category: parsed.category.as_deref().and_then(parse_category),
     })
 }
 
@@ -152,16 +183,40 @@ mod tests {
     }
 
     #[test]
-    fn parse_plain_json() {
+    fn parse_plain_json_defaults_category_to_none() {
         let s = parse(r#"{"strategy": 7, "argument": 6, "tone": 8}"#).unwrap();
         assert_eq!(
             s,
             JudgeScores {
                 strategy: 7,
                 argument: 6,
-                tone: 8
+                tone: 8,
+                category: None,
             }
         );
+    }
+
+    #[test]
+    fn parse_category_accepts_slugs_and_russian() {
+        let s = parse(r#"{"strategy":7,"argument":6,"tone":8,"category":"compromise"}"#).unwrap();
+        assert_eq!(s.category, Some(Strategy::Compromise));
+
+        let s = parse(r#"{"strategy":7,"argument":6,"tone":8,"category":"Конфронтация"}"#).unwrap();
+        assert_eq!(s.category, Some(Strategy::Confrontation));
+
+        let s =
+            parse(r#"{"strategy":7,"argument":6,"tone":8,"category":"collaboration"}"#).unwrap();
+        assert_eq!(s.category, Some(Strategy::Collaboration));
+    }
+
+    #[test]
+    fn parse_unknown_category_is_none_but_scores_survive() {
+        let s = parse(r#"{"strategy":3,"argument":4,"tone":5,"category":"агрессия"}"#).unwrap();
+        assert_eq!(
+            s.category, None,
+            "неизвестная категория не должна валить оценку"
+        );
+        assert_eq!((s.strategy, s.argument, s.tone), (3, 4, 5));
     }
 
     #[test]
