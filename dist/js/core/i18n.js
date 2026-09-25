@@ -312,6 +312,15 @@ const RU = {
   'settings.modelRole.llm': 'Диалог (LLM)',
   'settings.modelRole.tts': 'Синтез речи (TTS)',
   'settings.modelRole.stt': 'Распознавание речи (STT)',
+  'settings.effectiveLine': 'Сейчас подключено: ',
+  'settings.sourcePersonal': 'личный выбор',
+  'settings.sourceGlobal': 'общая настройка администратора',
+  'settings.sourceNone': 'не настроено',
+  'settings.globalModelLabel': 'Модель для всех пользователей — {role}',
+  'settings.globalUnassigned': '— не назначена —',
+  'settings.noRoleModels': 'нет моделей этой роли',
+  'settings.globalModelHint': 'Подключается всем, кроме тех, кто выбрал модель лично.',
+  'settings.globalSaved': 'Назначение обновлено — все подключены к модели',
 
   // About the team
   'team.title': 'О команде',
@@ -641,6 +650,15 @@ const EN = {
   'settings.modelRole.llm': 'Dialogue (LLM)',
   'settings.modelRole.tts': 'Speech synthesis (TTS)',
   'settings.modelRole.stt': 'Speech recognition (STT)',
+  'settings.effectiveLine': 'Currently connected: ',
+  'settings.sourcePersonal': 'personal choice',
+  'settings.sourceGlobal': 'shared administrator setup',
+  'settings.sourceNone': 'not configured',
+  'settings.globalModelLabel': 'Model for all users — {role}',
+  'settings.globalUnassigned': '— not assigned —',
+  'settings.noRoleModels': 'no models for this role',
+  'settings.globalModelHint': 'Applied to everyone except those who picked a model personally.',
+  'settings.globalSaved': 'Assignment updated — everyone is connected to the model',
 
   // About the team
   'team.title': 'About the team',

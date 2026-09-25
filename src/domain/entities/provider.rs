@@ -208,6 +208,36 @@ mod tests {
     }
 }
 
+/// Откуда берётся модель, которой пользователь **фактически** пользуется.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EffectiveModelSource {
+    /// Личное предпочтение пользователя ([`UserModelPreference`]).
+    Personal,
+    /// Глобальное назначение роли ([`RoleAssignment`]) — «настройка админа»,
+    /// достаётся всем, кто не выбирал модель лично.
+    Global,
+    /// Назначения нет (или оно протухло) — роль не настроена.
+    None,
+}
+
+/// Фактически подключённая модель по роли для конкретного пользователя.
+///
+/// Это то, что реально уйдёт в диалог/голос: личное предпочтение → иначе
+/// глобальное назначение роли → иначе `source = none`. Отдаётся в UI,
+/// чтобы пользователь видел **название** подключённой модели, а не
+/// безликий «глобальный умолчание».
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EffectiveModel {
+    pub role: ModelRole,
+    pub source: EffectiveModelSource,
+    pub model_id: Option<String>,
+    pub model_key: Option<String>,
+    pub display_name: Option<String>,
+    pub provider_id: Option<String>,
+    pub provider_name: Option<String>,
+}
+
 /// Пользовательское предпочтение модели для роли.
 ///
 /// Отсутствие записи = используется глобальное назначение роли

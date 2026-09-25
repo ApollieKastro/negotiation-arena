@@ -8,7 +8,7 @@ use axum::Json;
 use serde::Deserialize;
 
 use crate::domain::entities::model::ModelRole;
-use crate::domain::entities::provider::{ModelRecord, UserModelPreference};
+use crate::domain::entities::provider::{EffectiveModel, ModelRecord, UserModelPreference};
 use crate::error::{AppError, AppResult};
 use crate::web::middleware::{AppJson, AppQuery, AuthUser};
 use crate::web::state::AppState;
@@ -85,6 +85,18 @@ pub async fn remove_me(
         .providers
         .delete_user_preference(user.context(), &uid, role)?;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// `GET /api/v1/model-preferences/effective` — какие модели человек
+/// **фактически** использует по каждой роли: личное предпочтение → иначе
+/// глобальное назначение роли (настройка админа) → `source: "none"`.
+pub async fn effective_me(
+    State(state): State<AppState>,
+    user: AuthUser,
+) -> AppResult<Json<Vec<EffectiveModel>>> {
+    let uid = user.user_id().to_string();
+    let models = state.services.providers.effective_models(&uid)?;
+    Ok(Json(models))
 }
 
 /// `GET /api/v1/model-preferences/options?role=llm` — кандидаты для выбора

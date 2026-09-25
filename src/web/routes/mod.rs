@@ -221,6 +221,10 @@ fn api_v1_routes(limiter: RateLimiter) -> Router<AppState> {
             get(handlers::model_prefs::options),
         )
         .route(
+            "/model-preferences/effective",
+            get(handlers::model_prefs::effective_me),
+        )
+        .route(
             "/model-preferences/me/:role",
             get(handlers::model_prefs::get_me)
                 .put(handlers::model_prefs::set_me)

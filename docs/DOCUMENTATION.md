@@ -120,6 +120,17 @@ round((1 - w) * эвристика + w * LLM)     w = scoring.llm_judge_weight (
 2. Глобальное назначение роли `llm` (админ).
 3. Ничего → **503** «Диалог не настроен» (и аналогично для generate / voice).
 
+**Что видит пользователь в личном кабинете.** `GET /api/v1/model-preferences/effective`
+отдаёт по каждой роли **фактически подключённую** модель и источник:
+`source = personal` (личный выбор) → `global` (настройка администратора,
+ею пользуются все, кто не выбирал модель лично) → `none` (роль не настроена).
+Секция «Модели» в `#/settings` показывает строку «Сейчас подключено: …» с
+названием модели; у администратора там же селектор **общего назначения**
+(`PUT /api/v1/model-assignments/:role`), после сохранения которого личное
+предпочтение самого администратора по этой роли сбрасывается, чтобы не
+маскировало общее. Итог: настроил админ → все вошли в личный кабинет и
+подключены к той же модели (без личного выбора).
+
 **Mock (демо без ключей):** сид `demo-mock` + модель `demo-mock-llm` (провайдер `Mock`), авто-назначение `llm` один раз (флаг `platform.demo_llm_assigned`); после ручного снятия назначения seed не восстанавливает mock.
 
 **Ollama (локально, без ключа):** при заданном `OLLAMA_BASE_URL` сид создаёт провайдер `ollama` (`openai_compatible`, пустой API-ключ) и модель из `OLLAMA_MODEL` (default `qwen3.5:4b`). Назначение `llm`: всегда при `OLLAMA_SEED_ASSIGN=1`, иначе — только если роль пуста. Keyless действует для любых OpenAI-совместимых с локальным `base_url` (`localhost` / `127.0.0.0/8` / RFC1918) — `Provider::requires_api_key`.
@@ -190,7 +201,7 @@ docker compose up -d
 | GET | `/api/v1/sessions?limit=&offset=` | user → `{items,total,…}` |
 | GET | `/api/v1/stats/me`, `/stats/leaderboard` | user / admin |
 | GET/PUT/DELETE | `/api/v1/settings/me/{key}`, `/settings/me` | user |
-| GET/PUT/DELETE | `/api/v1/model-preferences/…` | user |
+| GET/PUT/DELETE | `/api/v1/model-preferences/…`, `/model-preferences/effective` | user |
 | POST | `/api/v1/voice/{tts,stt}` | user, roles |
 | CRUD | `/api/v1/admin/…`, providers, assignments, audit | admin |
 

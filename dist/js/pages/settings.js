@@ -175,18 +175,25 @@ export function renderPage(root, params = {}) {
   updatePreview();
 
   // ── Загрузка моделей ──
+  // Эффективная модель = та, которой человек реально пользуется в диалоге:
+  // личное предпочтение → иначе общее назначение администратора → не настроено.
+  const isAdmin = store.isAdmin();
   Promise.all([
     request('/model-preferences/options', { query: { role: 'llm' } }).catch(() => []),
     request('/model-preferences/options', { query: { role: 'tts' } }).catch(() => []),
     request('/model-preferences/options', { query: { role: 'stt' } }).catch(() => []),
     request('/model-preferences/me').catch(() => []),
-  ]).then(([llmOpts, ttsOpts, sttOpts, prefs]) => {
+    request('/model-preferences/effective').catch(() => []),
+    isAdmin ? request('/model-assignments').catch(() => []) : Promise.resolve([]),
+  ]).then(([llmOpts, ttsOpts, sttOpts, prefs, effective, assignments]) => {
     if (!isCurrent()) return;
     const optionsByRole = { llm: llmOpts || [], tts: ttsOpts || [], stt: sttOpts || [] };
     const prefList = Array.isArray(prefs) ? prefs : [];
+    const effList = Array.isArray(effective) ? effective : [];
+    const assignList = Array.isArray(assignments) ? assignments : [];
     const anyOptions = Object.values(optionsByRole).some((arr) => arr.length);
 
-    if (!anyOptions && !prefList.length) {
+    if (!anyOptions && !prefList.length && !effList.some((e) => e && e.display_name)) {
       modelsHost.replaceChildren(h('div.small.muted', {
         text: t('settings.modelsEmpty'),
       }));
@@ -198,14 +205,69 @@ export function renderPage(root, params = {}) {
     for (const { role, label } of MODEL_ROLES) {
       const opts = optionsByRole[role];
       const current = prefList.find((p) => p.role === role) || null;
-      if (!opts.length && !current) continue;
+      const eff = effList.find((e) => e && e.role === role) || null;
+      const globalId = (assignList.find((a) => a.role === role) || {}).model_id || '';
 
-      const currentLine = h('div.small', null,
-        h('span.muted', { text: t('settings.currentChoice') }),
-        current
-          ? h('strong', { text: current.model_display_name || current.model_id })
-          : h('span', { text: t('settings.globalDefault') })
+      // Что реально подключено у этого пользователя — название модели.
+      const connected = Boolean(eff && eff.display_name);
+      const sourceKey = !connected
+        ? 'settings.sourceNone'
+        : eff.source === 'personal'
+          ? 'settings.sourcePersonal'
+          : 'settings.sourceGlobal';
+      const effLine = h('div.small', null,
+        h('span.muted', { text: t('settings.effectiveLine') }),
+        h('strong', { text: connected ? eff.display_name : t('settings.sourceNone') }),
+        connected ? h('span.muted', { text: ` · ${t(sourceKey)}` }) : null
       );
+
+      // Админ здесь же редактирует ОБЩЕЕ назначение — им пользуются все,
+      // кто не выбрал модель лично. Личное предпочтение админа после
+      // смены общего сбрасывается, чтобы не маскировало назначение.
+      const cardChildren = [effLine];
+      if (isAdmin) {
+        const globalF = field({
+          label: t('settings.globalModelLabel', { role: label }),
+          type: 'select',
+          value: globalId,
+          options: [
+            {
+              value: '',
+              label: opts.length ? t('settings.globalUnassigned') : t('settings.noRoleModels'),
+            },
+            ...opts.map((m) => ({ value: m.id, label: m.display_name || m.model_key })),
+          ],
+          hint: t('settings.globalModelHint'),
+        });
+        globalF.control.addEventListener('change', async () => {
+          const modelId = globalF.control.value;
+          globalF.setError('');
+          globalF.control.disabled = true;
+          try {
+            if (modelId) {
+              await request(`/model-assignments/${role}`, {
+                method: 'PUT',
+                body: { model_id: modelId },
+              });
+            } else {
+              await request(`/model-assignments/${role}`, { method: 'DELETE' });
+            }
+            if (current) {
+              await request(`/model-preferences/me/${role}`, { method: 'DELETE' })
+                .catch(() => {});
+            }
+            toast(t('settings.globalSaved'), 'success');
+            if (isCurrent()) renderPage(root, params);
+          } catch (err) {
+            globalF.setError(err instanceof ApiError ? err.message : t('settings.saveFail'));
+            toast(err instanceof ApiError ? err.message : t('settings.saveError'), 'error');
+            if (isCurrent()) renderPage(root, params);
+          } finally {
+            globalF.control.disabled = false;
+          }
+        });
+        cardChildren.push(globalF);
+      }
 
       const resetBtn = h('button.btn.btn-ghost.btn-sm', {
         type: 'button',
@@ -264,7 +326,7 @@ export function renderPage(root, params = {}) {
         h('div.card', { style: { background: 'var(--surface-2)' } },
           h('div.card-body.stack', { style: { gap: 'var(--sp-3)' } },
             h('div.card-title', { text: label }),
-            currentLine,
+            ...cardChildren,
             selectF || h('div.small.muted', { text: t('settings.freePick') }),
             h('div.row', null, resetBtn)
           )
