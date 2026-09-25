@@ -102,8 +102,9 @@ pub fn blend(heuristic: TurnPoints, judge: JudgeScores, weight: f32) -> TurnPoin
 
 /// Записывает баллы хода в метрики сессии.
 ///
-/// Счётчики (стратегии, SPIN, интересы, критерии) ведутся по эвристике —
-/// они питают обратную связь и не зависят от оценки судьи.
+/// `strategy` — фактическая стратегия хода: категория LLM-судьи, если она
+/// есть, иначе эвристика. По ней ведутся счётчики (они питают обратную
+/// связь), баллы же приходят уже смешанными в `points`.
 ///
 /// Возвращает прибавку к баллу за ход (может быть отрицательной
 /// за грубый тон).
@@ -111,8 +112,9 @@ pub fn apply_points(
     metrics: &mut SessionMetrics,
     analysis: &MessageAnalysis,
     points: TurnPoints,
+    strategy: Strategy,
 ) -> i32 {
-    match analysis.strategy {
+    match strategy {
         Strategy::Collaboration => metrics.collaboration_count += 1,
         Strategy::Compromise => metrics.compromise_count += 1,
         Strategy::Confrontation => metrics.confrontation_count += 1,
@@ -146,7 +148,12 @@ pub fn apply_points(
 /// Возвращает прибавку к баллу за этот ход (может быть отрицательной
 /// за грубый тон).
 pub fn apply_analysis(metrics: &mut SessionMetrics, analysis: &MessageAnalysis) -> i32 {
-    apply_points(metrics, analysis, heuristic_points(analysis))
+    apply_points(
+        metrics,
+        analysis,
+        heuristic_points(analysis),
+        analysis.strategy,
+    )
 }
 
 /// Строит итоговый отчёт по сессии.
@@ -533,6 +540,7 @@ mod tests {
             strategy: 0,
             argument: 0,
             tone: 0,
+            category: None,
         };
 
         assert_eq!(blend(heuristic, judge, 0.0), heuristic);
@@ -548,6 +556,7 @@ mod tests {
             strategy: 10,
             argument: 4,
             tone: 0,
+            category: None,
         };
 
         let blended = blend(heuristic, judge, 1.0);
@@ -567,6 +576,7 @@ mod tests {
             strategy: 10,
             argument: 10,
             tone: 10,
+            category: None,
         };
 
         let blended = blend(heuristic, judge, 0.4);
@@ -578,29 +588,43 @@ mod tests {
     }
 
     #[test]
-    fn apply_points_writes_blended_scores_but_counts_from_analysis() {
+    fn apply_points_counts_strategies_from_given_category_not_heuristic() {
         let analysis = crate::domain::services::analysis::analyze(
             "Давайте найдём решение, выгодное для обеих сторон.",
         );
+        // Эвристика видит здесь сотрудничество, судья — конфронтацию.
         let judge = JudgeScores {
             strategy: 2,
             argument: 2,
             tone: 2,
+            category: Some(Strategy::Confrontation),
         };
         let points = blend(heuristic_points(&analysis), judge, 0.4);
 
         let mut metrics = SessionMetrics::default();
-        let delta = apply_points(&mut metrics, &analysis, points);
+        let delta = apply_points(&mut metrics, &analysis, points, Strategy::Confrontation);
 
         assert_eq!(delta, points.total());
         assert_eq!(metrics.strategy_score, points.strategy);
         assert_eq!(metrics.argument_score, points.argument);
         assert_eq!(metrics.tone_score, points.tone);
         assert_eq!(
-            metrics.collaboration_count, 1,
-            "счётчики стратегий остаются эвристическими"
+            metrics.confrontation_count, 1,
+            "счётчик стратегии идёт по категории судьи"
         );
+        assert_eq!(metrics.collaboration_count, 0);
         assert_eq!(metrics.total_score(), delta);
+    }
+
+    #[test]
+    fn effective_strategy_falls_back_to_heuristic_without_judge() {
+        let analysis = crate::domain::services::analysis::analyze("Мы не можем снизить цену.");
+        assert_eq!(analysis.strategy, Strategy::Confrontation);
+        // Без судьи категория = эвристика: apply_analysis так и делает.
+        let mut metrics = SessionMetrics::default();
+        apply_analysis(&mut metrics, &analysis);
+        assert_eq!(metrics.confrontation_count, 1);
+        assert_eq!(metrics.collaboration_count, 0);
     }
 
     #[test]

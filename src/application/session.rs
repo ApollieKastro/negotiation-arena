@@ -25,8 +25,9 @@ use crate::infrastructure::db::repos::SqliteRepos;
 const FALLBACK_MAX_TURNS: u32 = 40;
 
 /// Таймаут запроса к LLM-судье. Превышение → ход считается на эвристике:
-/// оценка модели не должна задерживать диалог.
-const JUDGE_TIMEOUT: Duration = Duration::from_secs(10);
+/// оценка модели не должна задерживать диалог. Больше ответа собеседника:
+/// судья идёт параллельно, поэтому итоговая задержка хода — максимум из двух.
+const JUDGE_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Максимальная длина реплики игрока в символах (защита от DoS и раздувания prompt).
 const MAX_PLAYER_TEXT_CHARS: usize = 4000;
@@ -408,8 +409,13 @@ impl SessionService {
             Some(scores) => scoring::blend(heuristic, scores, self.judge_weight()),
             None => heuristic,
         };
+        // Категория стратегии: решение судьи, иначе эвристика. По ней — и
+        // подпись под баллом в ленте, и счётчики в итоговом отчёте.
+        let strategy = judge_scores
+            .and_then(|scores| scores.category)
+            .unwrap_or(analysis.strategy);
         let score_before = session.total_score;
-        let score_delta = scoring::apply_points(&mut session.metrics, &analysis, points);
+        let score_delta = scoring::apply_points(&mut session.metrics, &analysis, points, strategy);
         session.total_score = session.metrics.total_score();
         session.turn_count += 1;
         let total_score = session.total_score;
@@ -426,7 +432,7 @@ impl SessionService {
             turn_index: (history.len() as u32).max(1),
             role: MessageRole::Player,
             content: player_text.to_string(),
-            strategy: Some(analysis.strategy.slug().to_string()),
+            strategy: Some(strategy.slug().to_string()),
             score_delta,
             created_at: now.clone(),
         };
@@ -452,7 +458,7 @@ impl SessionService {
             session,
             partner_reply,
             player_score_delta: score_delta,
-            strategy_slug: analysis.strategy.slug(),
+            strategy_slug: strategy.slug(),
             spin_code: analysis.spin.map(|s| s.code()),
             total_score, // накопленный счёт сессии (не дельта этого хода)
             judge: judge_scores,

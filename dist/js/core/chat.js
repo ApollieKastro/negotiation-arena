@@ -41,13 +41,17 @@ export function deltaChip(delta) {
   return h(`span.badge.no-dot.${cls}`, { text: t('session.scoreChip', { n: label }) });
 }
 
-export function strategyBadge(slug) {
+export function strategyBadge(slug, judge) {
   if (!slug) return null;
-  return badge(
+  const el = badge(
     strategyLabel(slug) || slug,
     STRATEGY_VARIANT[slug] || 'neutral',
     { dot: false }
   );
+  if (judge) {
+    el.setAttribute('title', `${t('session.strategyFromModel')}: ${judge.strategy}/10`);
+  }
+  return el;
 }
 
 export function spinBadge(code) {
@@ -86,7 +90,7 @@ export function messageNode(msg, { partnerName = '', spin = null, judge = null }
   const meta = [];
   if (isPlayer) {
     if (typeof msg.score_delta === 'number' && msg.score_delta !== 0) meta.push(deltaChip(msg.score_delta));
-    const sb = strategyBadge(msg.strategy);
+    const sb = strategyBadge(msg.strategy, judge);
     if (sb) meta.push(sb);
     if (spin) meta.push(spinBadge(spin));
     const jc = judgeChip(judge);
