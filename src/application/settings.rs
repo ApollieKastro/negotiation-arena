@@ -21,6 +21,11 @@ pub mod global_keys {
     pub const MAX_TURNS: &str = "platform.max_turns";
     /// Дневной лимит LLM-токенов на пользователя (0 = лимит выключен).
     pub const LLM_DAILY_TOKEN_LIMIT: &str = "platform.llm_daily_token_limit";
+    /// LLM-судья: оценивать реплики игрока моделью поверх эвристики
+    /// (`true` / `false`).
+    pub const LLM_JUDGE_ENABLED: &str = "scoring.llm_judge_enabled";
+    /// Доля LLM-оценки в баллах хода, 0..=1 (см. `scoring::blend`).
+    pub const LLM_JUDGE_WEIGHT: &str = "scoring.llm_judge_weight";
 }
 
 /// Ключи пользовательских настроек UI (хранятся с префиксом `user:{id}:`).
@@ -38,6 +43,8 @@ const DEFAULTS: &[(&str, &str)] = &[
     (global_keys::DEFAULT_LOCALE, "ru"),
     (global_keys::MAX_TURNS, "40"),
     (global_keys::LLM_DAILY_TOKEN_LIMIT, "0"),
+    (global_keys::LLM_JUDGE_ENABLED, "true"),
+    (global_keys::LLM_JUDGE_WEIGHT, "0.4"),
 ];
 
 /// Доступ к настройкам.

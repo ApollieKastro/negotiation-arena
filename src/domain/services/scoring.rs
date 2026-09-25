@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::domain::entities::scenario::{Ending, Scenario};
 use crate::domain::entities::session::{SessionMetrics, SpinCounts};
 use crate::domain::services::analysis::{MessageAnalysis, SpinType, Strategy};
+use crate::domain::services::judge::JudgeScores;
 
 /// Итог прохождения сценария — всё, что нужно для страницы результата.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,38 +34,91 @@ fn is_en(locale: &str) -> bool {
     locale.eq_ignore_ascii_case("en")
 }
 
-/// Применяет анализ реплики к метрикам сессии.
-///
-/// Возвращает прибавку к баллу за этот ход (может быть отрицательной
-/// за грубый тон).
-pub fn apply_analysis(metrics: &mut SessionMetrics, analysis: &MessageAnalysis) -> i32 {
-    let strategy_points = match analysis.strategy {
-        Strategy::Collaboration => {
-            metrics.strategy_score += 15;
-            metrics.collaboration_count += 1;
-            15
-        }
-        Strategy::Compromise => {
-            metrics.strategy_score += 10;
-            metrics.compromise_count += 1;
-            10
-        }
-        Strategy::Confrontation => {
-            metrics.strategy_score += 5;
-            metrics.confrontation_count += 1;
-            5
-        }
+/// Баллы одного хода по шкалам; складываются в [`SessionMetrics`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TurnPoints {
+    /// Стратегия: 15/10/5 по эвристике, 0..=15 после смешивания с LLM.
+    pub strategy: i32,
+    /// Аргументация: 0..=10.
+    pub argument: i32,
+    /// Тон: −5..=+5 (отрицательно за грубость).
+    pub tone: i32,
+    /// Бонус за техники (SPIN, интересы, объективные критерии) —
+    /// считает только эвристика, судья его не оценивает.
+    pub bonus: i32,
+}
+
+impl TurnPoints {
+    pub fn total(self) -> i32 {
+        self.strategy + self.argument + self.tone + self.bonus
+    }
+}
+
+/// Баллы хода по ключевым словам ([`analysis::analyze`]) — база скоринга.
+pub fn heuristic_points(analysis: &MessageAnalysis) -> TurnPoints {
+    let strategy = match analysis.strategy {
+        Strategy::Collaboration => 15,
+        Strategy::Compromise => 10,
+        Strategy::Confrontation => 5,
     };
-
-    let argument_points = (analysis.argument_strength * 10.0) as i32;
-    metrics.argument_score += argument_points;
-
-    let tone_points = (analysis.tone_impact * 5.0).round() as i32;
-    metrics.tone_score += tone_points;
+    let argument = (analysis.argument_strength * 10.0) as i32;
+    let tone = (analysis.tone_impact * 5.0).round() as i32;
 
     let mut bonus = 0;
-    if let Some(spin) = analysis.spin {
+    if analysis.spin.is_some() {
         bonus += 5;
+    }
+    if analysis.focuses_on_interests {
+        bonus += 5;
+    }
+    if analysis.uses_objective_criteria {
+        bonus += 8;
+    }
+
+    TurnPoints {
+        strategy,
+        argument,
+        tone,
+        bonus,
+    }
+}
+
+/// Смешивает эвристику с оценкой LLM-судьи: `weight` — доля модели (0..=1).
+///
+/// Шкалы судьи (0..=10) приводятся к диапазонам эвристики: стратегия 0..=15,
+/// аргумент 0..=10, тон −5..=+5 (оценка 5 — нейтральный тон). Бонус за
+/// техники остаётся эвристическим. `weight = 0` — чистая эвристика,
+/// `weight = 1` — чистая LLM-оценка.
+pub fn blend(heuristic: TurnPoints, judge: JudgeScores, weight: f32) -> TurnPoints {
+    let w = weight.clamp(0.0, 1.0);
+    let mix = |base: i32, other: f32| ((base as f32) * (1.0 - w) + other * w).round() as i32;
+    TurnPoints {
+        strategy: mix(heuristic.strategy, f32::from(judge.strategy) * 15.0 / 10.0),
+        argument: mix(heuristic.argument, f32::from(judge.argument)),
+        tone: mix(heuristic.tone, f32::from(judge.tone) - 5.0),
+        bonus: heuristic.bonus,
+    }
+}
+
+/// Записывает баллы хода в метрики сессии.
+///
+/// Счётчики (стратегии, SPIN, интересы, критерии) ведутся по эвристике —
+/// они питают обратную связь и не зависят от оценки судьи.
+///
+/// Возвращает прибавку к баллу за ход (может быть отрицательной
+/// за грубый тон).
+pub fn apply_points(
+    metrics: &mut SessionMetrics,
+    analysis: &MessageAnalysis,
+    points: TurnPoints,
+) -> i32 {
+    match analysis.strategy {
+        Strategy::Collaboration => metrics.collaboration_count += 1,
+        Strategy::Compromise => metrics.compromise_count += 1,
+        Strategy::Confrontation => metrics.confrontation_count += 1,
+    }
+
+    if let Some(spin) = analysis.spin {
         match spin {
             SpinType::Situation => metrics.spin_counts.situation += 1,
             SpinType::Problem => metrics.spin_counts.problem += 1,
@@ -73,16 +127,26 @@ pub fn apply_analysis(metrics: &mut SessionMetrics, analysis: &MessageAnalysis) 
         }
     }
     if analysis.focuses_on_interests {
-        bonus += 5;
         metrics.interest_focused += 1;
     }
     if analysis.uses_objective_criteria {
-        bonus += 8;
         metrics.objective_criteria_used += 1;
     }
-    metrics.technique_bonus += bonus;
 
-    strategy_points + argument_points + tone_points + bonus
+    metrics.strategy_score += points.strategy;
+    metrics.argument_score += points.argument;
+    metrics.tone_score += points.tone;
+    metrics.technique_bonus += points.bonus;
+
+    points.total()
+}
+
+/// Применяет анализ реплики к метрикам сессии (эвристика, без LLM-судьи).
+///
+/// Возвращает прибавку к баллу за этот ход (может быть отрицательной
+/// за грубый тон).
+pub fn apply_analysis(metrics: &mut SessionMetrics, analysis: &MessageAnalysis) -> i32 {
+    apply_points(metrics, analysis, heuristic_points(analysis))
 }
 
 /// Строит итоговый отчёт по сессии.
@@ -457,6 +521,86 @@ mod tests {
             d_collab > d_confront,
             "сотрудничество должно давать больше баллов: {d_collab} vs {d_confront}"
         );
+    }
+
+    #[test]
+    fn blend_at_zero_weight_keeps_heuristic() {
+        let analysis = crate::domain::services::analysis::analyze(
+            "Какие условия поставки для вас оптимальны? Давайте найдём решение, выгодное для обеих сторон.",
+        );
+        let heuristic = heuristic_points(&analysis);
+        let judge = JudgeScores {
+            strategy: 0,
+            argument: 0,
+            tone: 0,
+        };
+
+        assert_eq!(blend(heuristic, judge, 0.0), heuristic);
+    }
+
+    #[test]
+    fn blend_at_full_weight_uses_judge_scales() {
+        let analysis = crate::domain::services::analysis::analyze(
+            "Мы не можем снизить цену, это неприемлемо.",
+        );
+        let heuristic = heuristic_points(&analysis);
+        let judge = JudgeScores {
+            strategy: 10,
+            argument: 4,
+            tone: 0,
+        };
+
+        let blended = blend(heuristic, judge, 1.0);
+        assert_eq!(blended.strategy, 15, "10/10 → 15 баллов стратегии");
+        assert_eq!(blended.argument, 4);
+        assert_eq!(blended.tone, -5, "тон 0 → шкала −5..+5");
+        assert_eq!(blended.bonus, heuristic.bonus, "бонус считает эвристика");
+    }
+
+    #[test]
+    fn blend_splits_between_heuristic_and_judge() {
+        let analysis = crate::domain::services::analysis::analyze(
+            "Мы не можем снизить цену, это неприемлемо.",
+        );
+        let heuristic = heuristic_points(&analysis);
+        let judge = JudgeScores {
+            strategy: 10,
+            argument: 10,
+            tone: 10,
+        };
+
+        let blended = blend(heuristic, judge, 0.4);
+        // Стратегия: 0.6*5 + 0.4*15 = 9.
+        assert_eq!(blended.strategy, 9);
+        // Тон: 0.6*0 + 0.4*(10−5) = 2.
+        assert_eq!(blended.tone, 2);
+        assert!(blended.total() > heuristic.total());
+    }
+
+    #[test]
+    fn apply_points_writes_blended_scores_but_counts_from_analysis() {
+        let analysis = crate::domain::services::analysis::analyze(
+            "Давайте найдём решение, выгодное для обеих сторон.",
+        );
+        let judge = JudgeScores {
+            strategy: 2,
+            argument: 2,
+            tone: 2,
+        };
+        let points = blend(heuristic_points(&analysis), judge, 0.4);
+
+        let mut metrics = SessionMetrics::default();
+        let delta = apply_points(&mut metrics, &analysis, points);
+
+        assert_eq!(delta, points.total());
+        assert_eq!(metrics.strategy_score, points.strategy);
+        assert_eq!(metrics.argument_score, points.argument);
+        assert_eq!(metrics.tone_score, points.tone);
+        assert_eq!(
+            metrics.collaboration_count, 1,
+            "счётчики стратегий остаются эвристическими"
+        );
+        assert_eq!(metrics.total_score(), delta);
     }
 
     #[test]

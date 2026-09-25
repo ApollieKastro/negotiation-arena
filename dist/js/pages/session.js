@@ -60,6 +60,15 @@ function spinBadge(code) {
   });
 }
 
+/** Оценка LLM-судьи: стратегия/аргументация/тон, 0–10 */
+function judgeChip(j) {
+  if (!j) return null;
+  return h('span.badge.badge-info.no-dot', {
+    title: t('session.judgeTitle', { s: j.strategy, a: j.argument, t: j.tone }),
+    text: t('session.judgeChip', { n: `${j.strategy}/${j.argument}/${j.tone}` }),
+  });
+}
+
 export function renderPage(root, params = {}) {
   const id = params.id;
   // Guard от гонки: страницу могли покинуть, пока летел запрос
@@ -68,6 +77,7 @@ export function renderPage(root, params = {}) {
   let session = null;
   let scenario = null;
   let spinByMsgId = new Map();
+  let judgeByMsgId = new Map();
   let busy = false;
   let voiceOn = false;
   let mediaRecorder = null;
@@ -269,6 +279,8 @@ export function renderPage(root, params = {}) {
       if (sb) meta.push(sb);
       const spin = spinByMsgId.get(msg.id);
       if (spin) meta.push(spinBadge(spin));
+      const judge = judgeByMsgId.get(msg.id);
+      if (judge) meta.push(judgeChip(judge));
     }
 
     const bubble = h('div', {
@@ -377,6 +389,7 @@ export function renderPage(root, params = {}) {
         turn_index: session.turn_count + 1,
       };
       if (out.spin_code) spinByMsgId.set(playerMsg.id, out.spin_code);
+      if (out.judge) judgeByMsgId.set(playerMsg.id, out.judge);
 
       appendMessage(playerMsg);
       appendMessage(partnerMsg);

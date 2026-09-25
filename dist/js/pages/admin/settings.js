@@ -45,6 +45,18 @@ const KNOWN_KEYS = {
     hint: 'Дневной лимит LLM-токенов на пользователя; 0 = лимит выключен, при исчерпании — 429.',
     control: 'number',
   },
+  'scoring.llm_judge_enabled': {
+    hint: 'LLM-судья: оценивать реплики игрока моделью поверх эвристики. Выключено — баллы только по ключевым словам.',
+    control: 'select',
+    options: [
+      { value: 'true', label: 'Включён' },
+      { value: 'false', label: 'Выключен' },
+    ],
+  },
+  'scoring.llm_judge_weight': {
+    hint: 'Доля LLM-оценки в баллах хода, от 0 до 1 (0.4 = 40% модель / 60% эвристика).',
+    control: 'number',
+  },
 };
 
 function formModal({ title, body, submitLabel = 'Сохранить', onSubmit }) {
@@ -206,7 +218,7 @@ export function renderPage(root, params = {}) {
     if (key === null) {
       keyF = field({
         label: 'Ключ', required: true, placeholder: 'platform.site_name',
-        hint: 'Известные: platform.site_name, platform.default_theme, platform.default_font_size, platform.default_locale, platform.max_turns, platform.llm_daily_token_limit',
+        hint: 'Известные: platform.site_name, platform.default_theme, platform.default_font_size, platform.default_locale, platform.max_turns, platform.llm_daily_token_limit, scoring.llm_judge_enabled, scoring.llm_judge_weight',
       });
       ctrl = buildControl('', '');
     } else {
