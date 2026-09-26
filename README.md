@@ -151,7 +151,7 @@ negotiation-arena/
 ├── docs/DOCUMENTATION.md        # архитектура, симуляция, запуск, env
 ├── docs/MODELS_GUIDE.md         # выбор LLM/STT/TTS, API-ключи, локальные модели
 ├── docs/ROADMAP.md              # план работ и прогресс
-├── docs/presentation.pptx       # презентация для жюри (11 слайдов)
+├── docs/presentation.pptx       # презентация для жюри (11 слайдов) + .pdf/.txt
 ├── docs/presentation.pdf        # то же в PDF
 ├── .env.example                # шаблон переменных окружения
 ├── Dockerfile                  # multi-stage сборка образа
@@ -177,7 +177,7 @@ CI (`.github/workflows/ci.yml`) гоняет `fmt` + `clippy -D warnings` + `tes
 
 - [`docs/CONCEPT.md`](docs/CONCEPT.md) — продуктовая концепция (ЦА, ценность, границы MVP)
 - [`docs/DOCUMENTATION.md`](docs/DOCUMENTATION.md) — архитектура, логика симуляции, запуск/демо, env
-- [`docs/presentation.pptx`](docs/presentation.pptx) / [PDF](docs/presentation.pdf) — презентация для жюри (генератор: `scripts/make_presentation.py`)
+- [`docs/presentation.pptx`](docs/presentation.pptx) / [PDF](docs/presentation.pdf) / [TXT](docs/presentation.txt) — презентация для жюри (генератор: `scripts/make_presentation.py`)
 - [`docs/MODELS_GUIDE.md`](docs/MODELS_GUIDE.md) — выбор LLM/STT/TTS, API-ключи, локальные модели
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — план этапов и журнал прогресса
 - [`SECURITY.md`](SECURITY.md) — секреты, шифрование, как сообщить об уязвимости
