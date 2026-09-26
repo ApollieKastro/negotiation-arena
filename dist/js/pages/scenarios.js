@@ -136,6 +136,7 @@ function scenarioCard(s) {
 export function renderPage(root, params = {}) {
   let all = [];
   let difficulty = '';
+  let sphere = '';
   let query = '';
   const marker = h('span', { style: { display: 'none' }, 'data-page': 'scenarios' });
   const isCurrent = () => marker.isConnected;
@@ -152,6 +153,28 @@ export function renderPage(root, params = {}) {
     query = searchInput.value.trim().toLowerCase();
     renderGrid();
   });
+
+  // Фильтр по сфере: наполняется после загрузки списка сценариев.
+  const sphereSelect = h('select.input', {
+    'aria-label': t('scenarios.sphereFilter'),
+    style: { minWidth: '160px' },
+  });
+  sphereSelect.addEventListener('change', () => {
+    sphere = sphereSelect.value;
+    renderGrid();
+  });
+
+  function fillSphereOptions() {
+    const previous = sphere;
+    const spheres = [...new Set(all.map((s) => s.sphere).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b, 'ru'));
+    sphereSelect.replaceChildren(
+      h('option', { value: '', text: t('scenarios.sphereAll') }),
+      ...spheres.map((s) => h('option', { value: s, text: s })),
+    );
+    sphere = spheres.includes(previous) ? previous : '';
+    sphereSelect.value = sphere;
+  }
 
   function setDifficulty(id) {
     difficulty = id;
@@ -181,6 +204,7 @@ export function renderPage(root, params = {}) {
     return all.filter((s) => {
       if (s.is_active === false) return false;
       if (difficulty && s.difficulty !== difficulty) return false;
+      if (sphere && s.sphere !== sphere) return false;
       if (query && !String(s.title || '').toLowerCase().includes(query)) return false;
       return true;
     });
@@ -210,7 +234,7 @@ export function renderPage(root, params = {}) {
       )
     ),
     h('div.row.mt-3.mb-4', { style: { justifyContent: 'space-between' } },
-      filterRow,
+      h('div.row', null, filterRow, sphereSelect),
       h('div', { style: { minWidth: '240px', flex: '1', maxWidth: '320px' } }, searchInput)
     ),
     grid
@@ -220,6 +244,7 @@ export function renderPage(root, params = {}) {
   request('/scenarios').then((list) => {
     if (!isCurrent()) return;
     all = Array.isArray(list) ? list : [];
+    fillSphereOptions();
     renderGrid();
   }).catch((err) => {
     if (!isCurrent()) return;

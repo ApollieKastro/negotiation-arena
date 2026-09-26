@@ -16,6 +16,46 @@ use crate::infrastructure::db::repos::SqliteRepos;
 /// Максимальная длина брифа для ИИ-генерации (символы).
 const MAX_BRIEF_CHARS: usize = 4000;
 
+/// Контекст симуляции для ИИ-генерации — задаёт администратор на входе:
+/// сфера и тема переговоров, сложность, роли и цели сторон, тон собеседника.
+///
+/// Заполненные поля попадают в промпт и **дословно** применяются к
+/// сгенерированному сценарию ([`apply_context`]) — воля администратора
+/// приоритетнее того, что придумала LLM.
+#[derive(Debug, Clone)]
+pub struct GenerateContext<'a> {
+    pub brief: &'a str,
+    pub difficulty: Difficulty,
+    pub sphere: Option<&'a str>,
+    pub topic: Option<&'a str>,
+    pub player_role: Option<&'a str>,
+    pub player_goal: Option<&'a str>,
+    pub partner_role: Option<&'a str>,
+    pub partner_goal: Option<&'a str>,
+    pub tone: Option<&'a str>,
+}
+
+impl<'a> GenerateContext<'a> {
+    pub fn new(brief: &'a str, difficulty: Difficulty) -> Self {
+        Self {
+            brief,
+            difficulty,
+            sphere: None,
+            topic: None,
+            player_role: None,
+            player_goal: None,
+            partner_role: None,
+            partner_goal: None,
+            tone: None,
+        }
+    }
+
+    /// Нормализует опциональное значение: пустая строка → `None`.
+    fn clean(value: Option<&'a str>) -> Option<&'a str> {
+        value.map(str::trim).filter(|v| !v.is_empty())
+    }
+}
+
 /// Управление сценариями (RBAC: `ManageScenarios` для записи; чтение — все).
 pub struct ScenarioService {
     repos: Arc<SqliteRepos>,
@@ -221,19 +261,21 @@ impl ScenarioService {
         }
     }
 
-    /// Генерирует черновик сценария по брифу через назначенную LLM.
+    /// Генерирует черновик сценария по контексту через назначенную LLM.
+    ///
+    /// Администратор задаёт контекст ([`GenerateContext`]): бриф, сферу и тему,
+    /// сложность, роли и цели сторон, тон собеседника. Заполненные поля
+    /// применяются к результату буквально.
     ///
     /// Сценарий сохраняется как неактивный (`is_active = false`) — админ
     /// вычитывает и публикует [`set_active`].
     pub async fn generate(
         &self,
         actor: &AuthContext,
-        brief: &str,
-        difficulty: Difficulty,
-        sphere: Option<&str>,
+        ctx: &GenerateContext<'_>,
     ) -> AppResult<Scenario> {
         actor.require(super::Permission::ManageScenarios)?;
-        let brief = brief.trim();
+        let brief = ctx.brief.trim();
         if brief.is_empty() {
             return Err(AppError::BadRequest(
                 "бриф для генерации не может быть пустым".into(),
@@ -252,13 +294,7 @@ impl ScenarioService {
         let (chat, model_key) = self.providers.resolve_chat().await?;
 
         let system = ChatMessage::system(GENERATOR_SYSTEM);
-        let user = ChatMessage::user(format!(
-            "Сложность: {} ({})\nСфера: {}\nБриф:\n{}",
-            difficulty.title(),
-            difficulty.slug(),
-            sphere.unwrap_or("не указана"),
-            brief
-        ));
+        let user = ChatMessage::user(build_user_prompt(ctx));
 
         let request = ChatRequest::new(model_key, vec![system, user])
             .with_temperature(0.6)
@@ -283,12 +319,7 @@ impl ScenarioService {
         scenario.created_by = Some(actor.user_id.clone());
         scenario.ai_generated = true;
         scenario.is_active = false;
-        scenario.difficulty = difficulty;
-        if let Some(s) = sphere {
-            if scenario.sphere.trim().is_empty() {
-                scenario.sphere = s.to_string();
-            }
-        }
+        apply_context(&mut scenario, ctx);
         if scenario.endings.is_empty() {
             scenario.endings = default_endings();
         }
@@ -352,6 +383,56 @@ fn require_non_empty(field: &str, value: &str) -> AppResult<()> {
         )));
     }
     Ok(())
+}
+
+/// Собирает блок контекста для user-промпта генератора.
+///
+/// Формат строки «Сложность: … (slug)» и маркер «Бриф:» каноничны — на них
+/// опирается demo-mock (`extract_brief` / `detect_difficulty`) при демо без LLM.
+fn build_user_prompt(ctx: &GenerateContext<'_>) -> String {
+    let mut out = format!(
+        "Сложность: {} ({})\n",
+        ctx.difficulty.title(),
+        ctx.difficulty.slug()
+    );
+    let mut push = |label: &str, value: Option<&str>| {
+        if let Some(v) = GenerateContext::clean(value) {
+            out.push_str(&format!("{label}: {v}\n"));
+        }
+    };
+    push("Сфера", ctx.sphere);
+    push("Тема переговоров", ctx.topic);
+    push("Роль игрока", ctx.player_role);
+    push("Цель игрока", ctx.player_goal);
+    push("Роль собеседника", ctx.partner_role);
+    push("Цель собеседника", ctx.partner_goal);
+    push("Тон собеседника", ctx.tone);
+    out.push_str("Бриф:\n");
+    out.push_str(ctx.brief.trim());
+    out
+}
+
+/// Переносит заданный администратором контекст в сгенерированный сценарий.
+///
+/// Явные параметры имеют приоритет над полями, придуманными LLM: так
+/// «настройки на входе» действительно управляют результатом (требование ТЗ).
+/// `topic` не переносится — это подсказка для названия/описания, поля
+/// сценария для неё нет.
+fn apply_context(scenario: &mut Scenario, ctx: &GenerateContext<'_>) {
+    scenario.difficulty = ctx.difficulty;
+    let apply = |target: &mut String, value: Option<&str>| {
+        if let Some(v) = GenerateContext::clean(value) {
+            *target = v.to_string();
+        }
+    };
+    apply(&mut scenario.sphere, ctx.sphere);
+    apply(&mut scenario.player_role, ctx.player_role);
+    apply(&mut scenario.player_goal, ctx.player_goal);
+    apply(&mut scenario.partner_role, ctx.partner_role);
+    apply(&mut scenario.partner_goal, ctx.partner_goal);
+    if let Some(tone) = GenerateContext::clean(ctx.tone) {
+        scenario.partner_personality.tone = Some(tone.to_string());
+    }
 }
 
 /// Три финала по умолчанию, если автор их не описал.
@@ -418,6 +499,8 @@ interest-based bargaining). Составь ОДИН полноценный сц�
 
 Требования: у обеих сторон должны быть реальные интересы и BATNA; \
 в opening_context собеседник уже говорит, не здоровается дважды; \
+поля, явно заданные администратором в контексте (сфера, тема, роли, цели, тон) — \
+используй буквально и согласованно со всей историей; \
 тексты на русском.";
 
 /// Достаёт первый с JSON-объект из ответа LLM (снимает ```json и текст).
@@ -620,5 +703,78 @@ mod tests {
             \"created_at\":\"\",\"updated_at\":null}\n```\nГотово.";
         let scenario = parse_scenario_json(raw).unwrap();
         assert_eq!(scenario.title, "T");
+    }
+
+    #[test]
+    fn user_prompt_contains_context_and_keeps_mock_markers() {
+        let mut ctx = GenerateContext::new(
+            "  Скидка на подписку для уходящего клиента  ",
+            Difficulty::Hard,
+        );
+        ctx.sphere = Some("Продажи");
+        ctx.topic = Some("Продление годовой подписки");
+        ctx.player_role = Some("Account manager");
+        ctx.partner_goal = Some("Удержать бюджет до конца квартала");
+        ctx.tone = Some("  жёстко, контролирует тайминг  ");
+
+        let prompt = build_user_prompt(&ctx);
+        // Каноничные маркеры demo-mock.
+        assert!(prompt.contains("Сложность: Сложная (hard)"), "{prompt}");
+        assert!(
+            prompt.ends_with("Бриф:\nСкидка на подписку для уходящего клиента"),
+            "{prompt}"
+        );
+        // Заполненный контекст.
+        assert!(prompt.contains("Сфера: Продажи"), "{prompt}");
+        assert!(
+            prompt.contains("Тема переговоров: Продление годовой подписки"),
+            "{prompt}"
+        );
+        assert!(prompt.contains("Роль игрока: Account manager"), "{prompt}");
+        assert!(
+            prompt.contains("Цель собеседника: Удержать бюджет до конца квартала"),
+            "{prompt}"
+        );
+        assert!(
+            prompt.contains("Тон собеседника: жёстко, контролирует тайминг"),
+            "{prompt}"
+        );
+        // Незаполненные поля не засоряют промпт.
+        assert!(!prompt.contains("Роль собеседника:"), "{prompt}");
+    }
+
+    #[test]
+    fn apply_context_overrides_llm_fields_and_ignores_empty() {
+        // Чистая функция — сервис и БД не нужны.
+        let mut scenario = sample_scenario();
+        scenario.endings = default_endings();
+        // Стартовое состояние «от LLM».
+        scenario.sphere = "Бизнес".into();
+        scenario.player_role = "Переговорщик".into();
+        scenario.partner_personality.tone = Some("деловой".into());
+
+        let mut ctx = GenerateContext::new("бриф", Difficulty::Easy);
+        ctx.sphere = Some("Закупки");
+        ctx.player_role = Some("  Менеджер закупок  ");
+        ctx.partner_goal = Some("закрыть сделку до отчётного периода");
+        ctx.tone = Some(""); // пустое поле не должно затирать тон LLM
+        ctx.partner_role = None;
+
+        apply_context(&mut scenario, &ctx);
+
+        assert_eq!(scenario.difficulty, Difficulty::Easy);
+        assert_eq!(scenario.sphere, "Закупки");
+        assert_eq!(scenario.player_role, "Менеджер закупок", "обрезка пробелов");
+        assert_eq!(
+            scenario.partner_goal, "закрыть сделку до отчётного периода",
+            "цель собеседника из контекста"
+        );
+        assert_eq!(
+            scenario.partner_personality.tone.as_deref(),
+            Some("деловой"),
+            "пустой тон не затирает тон LLM"
+        );
+        // Не заданные в контексте поля остаются какими их придумала LLM.
+        assert_eq!(scenario.partner_role, "Арендодатель");
     }
 }

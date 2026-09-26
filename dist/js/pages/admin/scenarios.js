@@ -458,7 +458,7 @@ export function renderPage(root, params = {}) {
 
   function openGenerator() {
     const briefF = field({
-      label: 'Бриф', type: 'textarea', rows: 6, required: true,
+      label: 'Бриф', type: 'textarea', rows: 5, required: true,
       placeholder: 'Например: переговоры о скидке на годовую подписку с клиентом, который уходит к конкурентам…',
       hint: 'До 4000 символов. Опишите ситуацию, стороны и интересы.',
     });
@@ -466,25 +466,62 @@ export function renderPage(root, params = {}) {
       label: 'Сложность', type: 'select', value: 'medium',
       options: DIFFICULTIES.map((d) => ({ value: d.value, label: d.label })),
     });
-    const sphereF = field({ label: 'Сфера (необязательно)', placeholder: 'Продажи' });
+    const sphereF = field({ label: 'Сфера', placeholder: 'Продажи', hint: 'Отрасль, например: продажи, закупки, HR.' });
+    const topicF = field({ label: 'Тема переговоров', placeholder: 'Продление годовой подписки' });
+
+    const playerRoleF = field({ label: 'Роль игрока', placeholder: 'Account manager' });
+    const playerGoalF = field({ label: 'Цель игрока', placeholder: 'Удержать клиента без скидки больше 10%' });
+    const partnerRoleF = field({ label: 'Роль собеседника', placeholder: 'Директор по закупкам' });
+    const partnerGoalF = field({ label: 'Цель собеседника', placeholder: 'Снизить цену на 20%' });
+    const toneF = field({
+      label: 'Тон собеседника',
+      placeholder: 'жёстко, контролирует тайминг',
+      hint: 'Заполненные поля применяются к сценарию буквально; пустые — доработает ИИ.',
+    });
 
     formModal({
       title: 'ИИ-генератор сценария',
-      body: h('div.stack', null, briefF, h('div.input-row', null, diffF, sphereF)),
+      wide: true,
+      body: h('div.stack', null,
+        h('div.card', null,
+          h('div.card-header', null, h('div.card-title', { text: 'Контекст симуляции' })),
+          h('div.card-body', null,
+            briefF,
+            h('div.input-row.mt-3', null, diffF, sphereF),
+            h('div.mt-3', null, topicF)
+          )
+        ),
+        h('div.card', null,
+          h('div.card-header', null, h('div.card-title', { text: 'Стороны (необязательно)' })),
+          h('div.card-body', null,
+            h('div.input-row', null, playerRoleF, partnerRoleF),
+            h('div.input-row.mt-3', null, playerGoalF, partnerGoalF),
+            h('div.mt-3', null, toneF)
+          )
+        )
+      ),
       submitLabel: 'Сгенерировать',
       onSubmit: async () => {
         briefF.setError('');
         const brief = briefF.control.value.trim();
         if (!brief) { briefF.setError('Опишите бриф для генерации'); return false; }
         if (brief.length > 4000) { briefF.setError('Бриф не длиннее 4000 символов'); return false; }
-        const sphere = sphereF.control.value.trim();
+
+        const payload = { brief, difficulty: diffF.control.value };
+        const optional = {
+          sphere: sphereF, topic: topicF,
+          player_role: playerRoleF, player_goal: playerGoalF,
+          partner_role: partnerRoleF, partner_goal: partnerGoalF,
+          tone: toneF,
+        };
+        for (const [key, f] of Object.entries(optional)) {
+          const v = f.control.value.trim();
+          if (v) payload[key] = v;
+        }
+
         const created = await request('/scenarios/generate', {
           method: 'POST',
-          body: {
-            brief,
-            difficulty: diffF.control.value,
-            ...(sphere ? { sphere } : {}),
-          },
+          body: payload,
         });
         toast(`Черновик «${created.title}» сгенерирован — не опубликован`, 'success');
         await load();

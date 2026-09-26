@@ -5,6 +5,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
 
+use crate::application::scenario::GenerateContext;
 use crate::domain::entities::scenario::{Difficulty, Scenario};
 use crate::error::{AppError, AppResult};
 use crate::web::middleware::{AppJson, AppQuery, AuthUser};
@@ -24,6 +25,20 @@ pub struct GenerateRequest {
     pub difficulty: Option<Difficulty>,
     #[serde(default)]
     pub sphere: Option<String>,
+    /// Тема переговоров — подсказка для названия/описания сценария.
+    #[serde(default)]
+    pub topic: Option<String>,
+    #[serde(default)]
+    pub player_role: Option<String>,
+    #[serde(default)]
+    pub player_goal: Option<String>,
+    #[serde(default)]
+    pub partner_role: Option<String>,
+    #[serde(default)]
+    pub partner_goal: Option<String>,
+    /// Тон собеседника (`partner_personality.tone`).
+    #[serde(default)]
+    pub tone: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -127,22 +142,30 @@ pub async fn import(
     Ok((StatusCode::CREATED, Json(scenario)))
 }
 
-/// `POST /api/v1/scenarios/generate` — ИИ-генератор по брифу (admin).
+/// `POST /api/v1/scenarios/generate` — ИИ-генератор по контексту (admin).
+///
+/// Контекст: бриф (обязателен) + опционально сфера, тема, сложность, роли и
+/// цели сторон, тон собеседника — заполненные поля применяются буквально.
 pub async fn generate(
     State(state): State<AppState>,
     actor: AuthUser,
     AppJson(req): AppJson<GenerateRequest>,
 ) -> AppResult<(StatusCode, Json<Scenario>)> {
-    let difficulty = req.difficulty.unwrap_or(Difficulty::Medium);
+    let ctx = GenerateContext {
+        brief: &req.brief,
+        difficulty: req.difficulty.unwrap_or(Difficulty::Medium),
+        sphere: req.sphere.as_deref(),
+        topic: req.topic.as_deref(),
+        player_role: req.player_role.as_deref(),
+        player_goal: req.player_goal.as_deref(),
+        partner_role: req.partner_role.as_deref(),
+        partner_goal: req.partner_goal.as_deref(),
+        tone: req.tone.as_deref(),
+    };
     let scenario = state
         .services
         .scenarios
-        .generate(
-            actor.context(),
-            &req.brief,
-            difficulty,
-            req.sphere.as_deref(),
-        )
+        .generate(actor.context(), &ctx)
         .await?;
     Ok((StatusCode::CREATED, Json(scenario)))
 }

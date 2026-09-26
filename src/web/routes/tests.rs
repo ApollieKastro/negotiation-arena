@@ -1435,6 +1435,9 @@ async fn scenario_generate_without_llm_returns_503() {
 }
 
 /// Генерация сценария через сид demo-mock (без внешних API-ключей).
+///
+/// Заодно проверяет конфигурируемость: поля контекста администратора
+/// (сфера, тема, роли, цели, тон) применяются к результату буквально.
 #[tokio::test]
 async fn scenario_generate_with_mock_llm_returns_draft() {
     let app = TestApp::new();
@@ -1445,7 +1448,15 @@ async fn scenario_generate_with_mock_llm_returns_draft() {
         .call(
             "POST",
             "/api/v1/scenarios/generate",
-            Some(json!({ "brief": "Переговоры о зарплате", "difficulty": "medium" })),
+            Some(json!({
+                "brief": "Переговоры о зарплате",
+                "difficulty": "medium",
+                "sphere": "Закупки",
+                "topic": "Пересмотр зарплатной вилки",
+                "player_role": "Руководитель отдела",
+                "partner_goal": "Уложиться в фонд оплаты труда",
+                "tone": "настороженно"
+            })),
             Some(&admin),
         )
         .await;
@@ -1456,6 +1467,18 @@ async fn scenario_generate_with_mock_llm_returns_draft() {
     assert!(
         body["player_goal"].as_str().is_some_and(|s| !s.is_empty()),
         "player_goal: {body}"
+    );
+    // Контекст администратора применён буквально (поверх ответа mock-LLM).
+    assert_eq!(body["sphere"], "Закупки", "{body}");
+    assert_eq!(body["difficulty"], "medium", "{body}");
+    assert_eq!(body["player_role"], "Руководитель отдела", "{body}");
+    assert_eq!(
+        body["partner_goal"], "Уложиться в фонд оплаты труда",
+        "{body}"
+    );
+    assert_eq!(
+        body["partner_personality"]["tone"], "настороженно",
+        "{body}"
     );
 }
 
