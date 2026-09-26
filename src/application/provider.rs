@@ -6,7 +6,8 @@ use std::sync::Arc;
 use crate::application::auth::AuthContext;
 use crate::domain::entities::model::{ModelDescriptor, ModelRole};
 use crate::domain::entities::provider::{
-    ModelRecord, Provider, RoleAssignment, UserModelPreference,
+    EffectiveModel, EffectiveModelSource, ModelRecord, Provider, RoleAssignment,
+    UserModelPreference,
 };
 use crate::domain::ports::{
     AuditRepository, ChatModel, ModelCatalog, ProviderRepository, SpeechToText, TextToSpeech,
@@ -463,6 +464,70 @@ impl ProviderService {
         )
     }
 
+    /// Фактически подключённые модели пользователя — по всем трём ролям.
+    ///
+    /// Порядок тот же, что у вызовов диалога/голоса: личное предпочтение →
+    /// глобальное назначение роли (настройка админа, ею пользуются все, кто
+    /// не выбирал модель лично) → `source: none` (роль не настроена).
+    /// Ненастроенная роль — не ошибка, а `none`: endpoint читает UI.
+    pub fn effective_models(&self, user_id: &str) -> AppResult<Vec<EffectiveModel>> {
+        let mut out = Vec::with_capacity(ModelRole::ALL.len());
+        for role in ModelRole::ALL {
+            out.push(self.effective_model(user_id, role)?);
+        }
+        Ok(out)
+    }
+
+    /// Эффективная модель одной роли (см. [`Self::effective_models`]).
+    fn effective_model(&self, user_id: &str, role: ModelRole) -> AppResult<EffectiveModel> {
+        // Личное предпочтение — только валидное: та же роль, модель и
+        // провайдер включены (как в assigned_model_for).
+        if let Some(pref) = self.repos.providers.user_preference(user_id, role.slug())? {
+            if let Some(model) = self.repos.providers.get_model(&pref.model_id)? {
+                if model.role == role && model.is_enabled {
+                    if let Some(provider) = self.repos.providers.get(&model.provider_id)? {
+                        if provider.is_enabled {
+                            return Ok(EffectiveModel {
+                                role,
+                                source: EffectiveModelSource::Personal,
+                                model_id: Some(model.id),
+                                model_key: Some(model.model_key),
+                                display_name: Some(model.display_name),
+                                provider_id: Some(provider.id),
+                                provider_name: Some(provider.name),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Глобальное назначение роли: протухшее/отключённое → не настроено.
+        match self.assigned_model(role) {
+            Ok((model, provider)) => Ok(EffectiveModel {
+                role,
+                source: EffectiveModelSource::Global,
+                model_id: Some(model.id),
+                model_key: Some(model.model_key),
+                display_name: Some(model.display_name),
+                provider_id: Some(provider.id),
+                provider_name: Some(provider.name),
+            }),
+            Err(err) => {
+                tracing::debug!(role = role.slug(), error = %err, "роль не настроена");
+                Ok(EffectiveModel {
+                    role,
+                    source: EffectiveModelSource::None,
+                    model_id: None,
+                    model_key: None,
+                    display_name: None,
+                    provider_id: None,
+                    provider_name: None,
+                })
+            }
+        }
+    }
+
     // ── Фасады портов (для SessionService / ScenarioService) ──
 
     /// Строит handle провайдера с расшифрованным ключом (без RBAC — вызывается
@@ -816,6 +881,36 @@ mod preference_tests {
             .user_preferences(&admin, &user.user_id)
             .unwrap()
             .is_empty());
+    }
+
+    /// Эффективная модель: личный выбор → глобальное назначение → не настроено.
+    #[test]
+    fn effective_models_report_personal_global_and_none() {
+        let (_db, svc) = setup().unwrap();
+        let (_p, model_a, model_b) = seed_provider_and_models(&svc);
+        let alice = user_ctx(&svc, "alice");
+        let bob = user_ctx(&svc, "bob");
+
+        // Без личного выбора — глобальное назначение (настройка админа).
+        let eff = svc.providers.effective_models(&bob.user_id).unwrap();
+        let llm = eff.iter().find(|e| e.role == ModelRole::Llm).expect("llm");
+        assert_eq!(llm.source, EffectiveModelSource::Global);
+        assert_eq!(llm.model_id.as_deref(), Some(model_a.as_str()));
+        assert_eq!(llm.display_name.as_deref(), Some("Модель A"));
+        // Роль tts не назначалась → источник «не настроено», без модели.
+        let tts = eff.iter().find(|e| e.role == ModelRole::Tts).expect("tts");
+        assert_eq!(tts.source, EffectiveModelSource::None);
+        assert!(tts.model_id.is_none());
+
+        // Личный выбор B → источник personal, модель B.
+        svc.providers
+            .set_user_preference(&alice, &alice.user_id, ModelRole::Llm, &model_b)
+            .unwrap();
+        let eff = svc.providers.effective_models(&alice.user_id).unwrap();
+        let llm = eff.iter().find(|e| e.role == ModelRole::Llm).expect("llm");
+        assert_eq!(llm.source, EffectiveModelSource::Personal);
+        assert_eq!(llm.model_id.as_deref(), Some(model_b.as_str()));
+        assert_eq!(llm.display_name.as_deref(), Some("Модель B"));
     }
 
     #[test]

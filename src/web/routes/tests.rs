@@ -1174,6 +1174,48 @@ async fn model_preference_set_get_clear_flow_for_user() {
     assert!(body.is_null(), "после clear предпочтение = null: {body}");
 }
 
+/// Эффективные модели: обычный пользователь видит глобальное назначение
+/// админа (то же, чем реально пользуется в диалоге), без токена — 401.
+#[tokio::test]
+async fn effective_models_show_global_assignment_to_plain_user() {
+    let app = TestApp::new();
+    let admin = app.admin_token().await;
+    let model_id = seed_llm_model(&app, &admin).await;
+
+    // Настройка админа: модель назначена на роль (для всех, кроме личного выбора).
+    let (status, body) = app
+        .call(
+            "PUT",
+            "/api/v1/model-assignments/llm",
+            Some(json!({ "model_id": model_id })),
+            Some(&admin),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    let user = app.user_token().await;
+    let (status, body) = app
+        .call(
+            "GET",
+            "/api/v1/model-preferences/effective",
+            None,
+            Some(&user),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let arr = body.as_array().expect("array");
+    assert_eq!(arr.len(), 3, "по записи на каждую роль: {body}");
+    let llm = arr.iter().find(|e| e["role"] == "llm").expect("llm");
+    assert_eq!(llm["source"], "global", "{body}");
+    assert_eq!(llm["model_id"], model_id, "{body}");
+    assert_eq!(llm["display_name"], "Test LLM", "{body}");
+
+    let (status, _) = app
+        .call("GET", "/api/v1/model-preferences/effective", None, None)
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
 #[tokio::test]
 async fn user_cannot_set_foreign_preference_but_admin_can() {
     let app = TestApp::new();
