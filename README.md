@@ -17,9 +17,40 @@
 - **Фронтенд** — SPA vanilla-JS в `dist/` (history-API router, CSS), отдаётся Axum как есть, без этапа сборки.
 - **HTTP API** — версионирован: `/api/v1/...`; health: `GET /health`.
 
-## Быстрый старт
+## Установка
 
-Требуется [Rust](https://rustup.rs) (stable).
+Два варианта: **Docker** (рекомендуется — ничего ставить не нужно) или локальная сборка на Rust.
+
+### Вариант 1 — Docker
+
+```bash
+git clone https://github.com/ApollieKastro/negotiation-arena.git
+cd negotiation-arena
+cp .env.example .env          # при желании поправьте секреты/пароль
+docker compose up -d --build  # сборка образа + запуск
+```
+
+Проверка: `curl http://localhost:3001/health` → `{"database":"up","status":"ok","version":"0.2.0"}`.
+
+Если compose-плагина нет:
+
+```bash
+docker build -t negotiation-arena:latest .
+docker run -d --name negotiation-arena \
+  -p 3001:3001 \
+  -v negotiation_data:/app/data \
+  --env-file .env \
+  negotiation-arena:latest
+```
+
+- **Стоп:** `docker compose down` — данные (SQLite, модели) остаются в volume `negotiation_data`.
+- **Полный сброс до чистого состояния:** `docker compose down -v` — удаляет volume со всеми историями сессий, аудитом и записями пользователей; при следующем старте БД создаётся заново (сид: роль `admin`, 6 базовых сценариев, демо-модель для офлайн-игры).
+
+Образ собирается multi-stage (`rust:1-bookworm` → `debian:bookworm-slim`, ~167 МБ), работает под непривилегированным пользователем, healthcheck опрашивает `GET /health`.
+
+### Вариант 2 — локально (Rust)
+
+Требуется [Rust](https://rustup.rs) stable.
 
 ```bash
 cp .env.example .env   # при желании поправьте значения
@@ -28,19 +59,11 @@ cargo run
 
 Сервер поднимется на **http://localhost:3001** (портом управляет `PORT`).
 
-**Вход в админку:** логин `admin`, пароль `admin123` (значение `ADMIN_PASSWORD`; меняется при первом запуске — сид создаёт пользователя один раз).
+- **Полный сброс до чистого состояния:** удалите файлы `negotiation_arena.db*` — при следующем запуске БД создаётся заново с теми же сидами.
 
-## Docker
+**Вход в админку:** логин `admin`, пароль `admin123` (значение `ADMIN_PASSWORD`; задаётся только при первом запуске — сид создаёт пользователя один раз).
 
-```bash
-docker compose up -d
-# или, если плагин compose не установлен:
-docker-compose up -d
-```
-
-Образ собирается по `Dockerfile` (multi-stage: `rust:1-bookworm` → `debian:bookworm-slim`), приложение слушает `3001/tcp`, SQLite и локальные модели лежат в volume `negotiation_data` (`/app/data`). Healthcheck опрашивает `GET /health`.
-
-Конфигурация берётся из окружения — передайте `JWT_SECRET`, `ENCRYPTION_KEY`, `ADMIN_PASSWORD` через `.env` рядом с `docker-compose.yml` (compose читает его автоматически) или через `environment:`.
+Конфигурация (оба варианта) — переменные окружения: compose подхватывает `.env` автоматически, список переменных см. в [Конфигурация](#конфигурация) и [`.env.example`](.env.example).
 
 ## Конфигурация
 
