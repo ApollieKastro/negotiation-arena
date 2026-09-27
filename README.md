@@ -52,7 +52,19 @@ docker run -d --name negotiation-arena \
 
 ### Вариант 2 — локально (Rust)
 
-Требуется [Rust](https://rustup.rs) stable.
+**Установка одним скриптом (рекомендуется):**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/main/install.sh | bash
+# или из клона: ./install.sh   → меню:
+#   1) Установить   2) Обновить (GitHub main + пересборка)   3) Удалить
+```
+
+Установщик клонирует репозиторий (если его нет), собирает release, создаёт
+ярлык приложения «Negotiation Arena», команды `arena` / `negotiation-arena`
+в `~/.local/bin` и алиас `arena` в `.zshrc`. Повторный запуск идемпотентен.
+
+Требуется [Rust](https://rustup.rs) stable (для ручной сборки).
 
 ```bash
 cp .env.example .env   # при желании поправьте значения
