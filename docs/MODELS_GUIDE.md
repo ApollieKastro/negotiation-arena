@@ -86,9 +86,22 @@ OLLAMA_MODEL=qwen3:4b
 
 | Модель | Как скачать | Формат / бэкенд |
 |--------|-------------|-----------------|
-| **Nemotron 3.5 ASR 0.6b** (рекомендуется, мультиязык) | Админка → **Локальные файлы** → source `nvidia/nemotron-3.5-asr-streaming-0.6b`, filename `nemotron-3.5-asr-streaming-0.6b.q8_0.gguf` **или** пустой filename (весь repo, нужен `hf`) | `nemo-speech` **или** HF-каталог с `config.json` + transformers |
-| **Whisper (faster-whisper)** | URL модели CT2/ggml или repo с весами | `faster-whisper` (`local_stt.py`) |
+| **faster-whisper-base** (старт, ~145 МБ) | curl-рецепт ниже **или** админка → source `Systran/faster-whisper-base`, filename пусто (для «весь repo» нужен HF CLI `huggingface_hub`) | `faster-whisper` (`local_stt.py`), ключ `faster-whisper-base` |
+| **Nemotron 3.5 ASR 0.6b** (мультиязык) | Админка → **Локальные файлы** → source `nvidia/nemotron-3.5-asr-streaming-0.6b`, filename `nemotron-3.5-asr-streaming-0.6b.q8_0.gguf` **или** пустой filename (весь repo, нужен `hf`) | `nemo-speech` **или** HF-каталог с `config.json` + transformers |
 | Готовый облачный | Не качаем | API выше |
+
+**Пошагово (faster-whisper-base, проверено):**
+
+```bash
+mkdir -p models/faster-whisper-base
+for f in model.bin config.json tokenizer.json vocabulary.txt; do
+  curl -L "https://huggingface.co/Systran/faster-whisper-base/resolve/main/$f" \
+    -o "models/faster-whisper-base/$f"
+done
+```
+
+Каталог с `model.bin` определяется бэкендом автоматически → **В модель…** → роль
+**stt** → **Назначения ролей** → ключ `faster-whisper-base`.
 
 **Пошагово (Nemotron):**
 
@@ -97,6 +110,10 @@ OLLAMA_MODEL=qwen3:4b
 3. **В модель…** → роль **stt** → **Назначения ролей** → назначить.
 
 Без зависимостей скрипт ответит понятной ошибкой «pip install -r scripts/requirements-voice.txt».
+
+> ⚠️ **Ловушка «Скачать»:** админка сохраняет тело URL как есть. URL должен вести
+> на файл (`…/resolve/main/…`), иначе в `MODELS_DIR` запишется HTML-страница
+> HuggingFace — симптомы: «не найден .onnx голос», «не найдена модель».
 
 ---
 
@@ -117,14 +134,28 @@ OLLAMA_MODEL=qwen3:4b
 
 ### 4.2 Локальный TTS (Piper)
 
-Уже можно без скачивания, если в `MODELS_DIR` лежит голос (сид/demo часто кладёт):
+Голос — это два файла рядом: `.onnx` (веса) + `.onnx.json` (конфиг, обязателен).
+Ключ модели — путь к `.onnx` относительно `MODELS_DIR`.
 
-| Голос | Файл | Язык |
-|-------|------|------|
-| **ru_RU-irina-medium** | `models/ru/ru_RU/irina/medium/ru_RU-irina-medium.onnx` | русский |
+| Голос | Ключ модели | Примечание |
+|-------|-------------|------------|
+| **ru_RU-ruslan-medium** | `piper/ru_RU-ruslan-medium.onnx` | Входит в Docker-образ (seed entrypoint'ом), проверен E2E |
+| irina / denis / dmitri / ruslan и др. | путь файла от `MODELS_DIR` | [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices) |
 
-- Установить: `pip install -r scripts/requirements-voice.txt` (пакет `piper-tts`).
-- Другой голос: [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices) → скачать `.onnx` + `.onnx.json` (URL или HF в «Локальных файлах»).
+- **Docker:** голос уже засеян — только назначить роль `tts` (см. README, «Голос в Docker»).
+- **Вручную (проверено):**
+
+```bash
+mkdir -p models/piper
+B=https://huggingface.co/rhasspy/piper-voices/resolve/main/ru/ru_RU/ruslan/medium/ru_RU-ruslan-medium.onnx
+curl -L "$B"      -o models/piper/ru_RU-ruslan-medium.onnx
+curl -L "$B.json" -o models/piper/ru_RU-ruslan-medium.onnx.json
+```
+
+- **Через админку:** **Локальные файлы** → source `rhasspy/piper-voices`, filename
+  `ru/ru_RU/ruslan/medium/ru_RU-ruslan-medium.onnx` (и отдельно тот же путь с
+  `.json`) — файлы лягут в корень `MODELS_DIR`, ключ = имя файла.
+- Зависимости: пакет `piper-tts` (входит в `requirements-voice.txt`; в Docker стоит уже).
 - **В модель…** → роль **tts** → **Назначения ролей** → назначить.
 
 ---
@@ -145,6 +176,7 @@ OLLAMA_MODEL=qwen3:4b
 |---------|---------|---------|
 | 503 «Диалог не настроен» | нет назначения `llm` или модель/провайдер выключены | Назначения ролей / включить |
 | 503 «Голосовой сервис не настроен» | нет `stt`/`tts` | Назначить роли |
+| 502 «не найден .onnx голос по пути …» / «локальная модель не найдена» | вместо файла скачан HTML-страница HF или пустой каталог | прямой URL `…/resolve/main/…` или curl-рецепты §3.2/§4.2 |
 | 502/«Внешний сервис недоступен» | неверный ключ/URL | Проверить Base URL и ключ, Ping |
 | STT: «pip install …» | нет Python-зависимостей | `pip install -r scripts/requirements-voice.txt` |
 

@@ -64,6 +64,10 @@ curl -fsSL https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/mai
 ярлык приложения «Negotiation Arena», команды `arena` / `negotiation-arena`
 в `~/.local/bin` и алиас `arena` в `.zshrc`. Повторный запуск идемпотентен.
 
+После установки: ярлык поднимает сервер в фоне и открывает браузер (повторный
+клик — только вкладка, второй экземпляр не поднимается). Остановка:
+`kill "$(cat ~/.cache/negotiation-arena.pid)"`, лог: `~/.cache/negotiation-arena.log`.
+
 Требуется [Rust](https://rustup.rs) stable (для ручной сборки).
 
 ```bash
@@ -143,6 +147,28 @@ OLLAMA_SEED_ASSIGN=1                         # 1 — при старте наз�
 
 ### Локальные модели STT/TTS (URL / HuggingFace)
 
+**Проверенная офлайн-связка** (Piper TTS + faster-whisper STT — работает и локально, и в Docker):
+
+```bash
+mkdir -p models/piper models/faster-whisper-base
+B=https://huggingface.co/rhasspy/piper-voices/resolve/main/ru/ru_RU/ruslan/medium/ru_RU-ruslan-medium.onnx
+curl -L "$B"      -o models/piper/ru_RU-ruslan-medium.onnx       # голос (63 МБ)
+curl -L "$B.json" -o models/piper/ru_RU-ruslan-medium.onnx.json  # конфиг — обязателен
+
+for f in model.bin config.json tokenizer.json vocabulary.txt; do   # STT (~145 МБ)
+  curl -L "https://huggingface.co/Systran/faster-whisper-base/resolve/main/$f" \
+    -o "models/faster-whisper-base/$f"
+done
+```
+
+Дальше: **В модель…** → роли, ключи — `piper/ru_RU-ruslan-medium.onnx` (`tts`)
+и `faster-whisper-base` (`stt`) → **Назначения ролей**. В Docker русский голос уже
+засеян entrypoint'ом — достаточно назначить (см. «Голос в Docker»).
+
+⚠️ Скачивание в админке сохраняет тело URL как есть: URL должен вести на **файл**
+(`…/resolve/main/…`), иначе вместо модели запишется HTML-страница HuggingFace
+(симптомы: «не найден .onnx голос», «не найдена модель»).
+
 1. Установите зависимости инференса: `pip install -r scripts/requirements-voice.txt`
    (в Docker-образе уже установлены; внутри контейнера можно допакетировать:
    `docker exec -it negotiation-arena pip3 install <пакет>`).
@@ -193,8 +219,11 @@ negotiation-arena/
 ├── docs/presentation.pptx       # презентация для жюри (11 слайдов) + .pdf/.txt
 ├── docs/presentation.pdf        # то же в PDF
 ├── .env.example                # шаблон переменных окружения
+├── install.sh                  # установщик: 1 Установить / 2 Обновить (GitHub) / 3 Удалить + ярлык
 ├── Dockerfile                  # multi-stage сборка образа
 ├── docker-compose.yml          # сервис arena + volume + healthcheck
+├── docker-entrypoint.sh        # сидинг Piper-голоса в volume перед стартом контейнера
+├── scripts/                    # локальный голос: local_tts.py, local_stt.py, requirements-voice.txt
 └── SECURITY.md                 # секреты, шифрование, обработка уязвимостей
 ```
 
