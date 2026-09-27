@@ -46,7 +46,9 @@ docker run -d --name negotiation-arena \
 - **Стоп:** `docker compose down` — данные (SQLite, модели) остаются в volume `negotiation_data`.
 - **Полный сброс до чистого состояния:** `docker compose down -v` — удаляет volume со всеми историями сессий, аудитом и записями пользователей; при следующем старте БД создаётся заново (сид: роль `admin`, 6 базовых сценариев, демо-модель для офлайн-игры).
 
-Образ собирается multi-stage (`rust:1-bookworm` → `debian:bookworm-slim`, ~167 МБ), работает под непривилегированным пользователем, healthcheck опрашивает `GET /health`.
+Образ собирается multi-stage (`rust:1-bookworm` → `debian:bookworm-slim`), работает под непривилегированным пользователем, healthcheck опрашивает `GET /health`. СPython-зависимостями голоса (см. ниже) размер образа ~1.1 ГБ.
+
+**Голос в Docker.** Образ уже содержит Python, `piper-tts`, `faster-whisper` и скрипты `scripts/local_*.py` — доустанавливать ничего не нужно. При первом старте entrypoint сидит русский Piper-голос в volume; в админке назначьте его на роль **TTS**: `Провайдеры → Local → Модели → piper/ru_RU-ruslan-medium.onnx → Назначения ролей → tts`. Без голоса в сборке: `docker compose build --build-arg PIPER_VOICE_DOWNLOAD=0`. Для STT скачайте, например, HF repo `Systran/faster-whisper-base` (админка → Локальные файлы) и назначьте на роль `stt`.
 
 ### Вариант 2 — локально (Rust)
 
@@ -130,7 +132,9 @@ OLLAMA_SEED_ASSIGN=1                         # 1 — при старте наз�
 ### Локальные модели STT/TTS (URL / HuggingFace)
 
 1. Установите зависимости инференса: `pip install -r scripts/requirements-voice.txt`
-   (для Nemotron ASR также нужен `nemo-speech` **или** HF-каталог с `config.json`).
+   (в Docker-образе уже установлены; внутри контейнера можно допакетировать:
+   `docker exec -it negotiation-arena pip3 install <пакет>`).
+   Для Nemotron ASR также нужен `nemo-speech` **или** HF-каталог с `config.json`.
 2. **Админка → Провайдеры → Локальные файлы** → укажите URL файла **или**
    HF repo `org/name` (+ опциональный `filename`) → **Скачать**.
    API: `POST /api/v1/local-models/download`, `GET|DELETE /api/v1/local-models`.

@@ -30,4 +30,6 @@ __pycache__/
 *.log
 src-tauri/
 scenarios/
-scripts/
+# Скрипты нужны в образе (локальный TTS/STT), кроме служебных
+scripts/make_presentation.py
+scripts/__pycache__/
