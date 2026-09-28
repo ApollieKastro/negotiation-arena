@@ -180,6 +180,7 @@ export function renderPage(root, params = {}) {
         h('div.text-danger', { text: errMsg(err, 'Не удалось загрузить назначения') })
       );
     }
+    await loadPresets();
     await loadLocalModels();
   }
 
@@ -188,9 +189,25 @@ export function renderPage(root, params = {}) {
       localFiles = await request('/local-models');
       renderLocalModels();
     } catch (err) {
-      localHost.replaceChildren(
-        h('div.text-danger', { text: errMsg(err, 'Не удалось загрузить локальные файлы') })
-      );
+      if (localTabBuilt) {
+        // Вкладка построена — просто сообщаем, данные обновятся при следующем клике.
+        toast(errMsg(err, 'Не удалось обновить локальные файлы'), 'error');
+      } else {
+        localHost.replaceChildren(
+          h('div.card', null,
+            h('div.card-body', null,
+              h('div.text-danger.mb-2', {
+                text: errMsg(err, 'Не удалось загрузить локальные файлы'),
+              }),
+              h('button.btn.btn-secondary', {
+                type: 'button',
+                text: 'Повторить',
+                onClick: () => loadLocalModels(),
+              }),
+            ),
+          ),
+        );
+      }
     }
   }
 
@@ -198,6 +215,7 @@ export function renderPage(root, params = {}) {
     try {
       assignments = await request('/model-assignments');
       renderAssignments();
+      renderLocalTable(); // колонка «Модель» в локальных файлах
     } catch (err) {
       toast(errMsg(err, 'Не удалось обновить назначения'), 'error');
     }
@@ -207,6 +225,7 @@ export function renderPage(root, params = {}) {
     try {
       models = await request('/models', providerFilter ? { query: { provider_id: providerFilter } } : {});
       renderModels();
+      renderLocalTable(); // колонка «Модель» в локальных файлах
     } catch (err) {
       toast(errMsg(err, 'Не удалось обновить модели'), 'error');
     }
@@ -645,22 +664,123 @@ export function renderPage(root, params = {}) {
     return providers.find((p) => p.kind === 'local') || null;
   }
 
-  function renderLocalModels() {
+  let presets = [];
+  let localTabBuilt = false;
+  let localQuery = '';
+  let localSearchInput = null;
+  let localTableHost = null;
+  let presetHost = null;
+
+  async function loadPresets() {
+    try {
+      presets = await request('/local-models/presets');
+    } catch {
+      presets = []; // пресеты — не критично, вкладка работает и без них
+    }
+  }
+
+  /** Пресет установлен: на диске есть файл model_key или файлы в его каталоге. */
+  function presetInstalled(p) {
+    const prefix = `${p.model_key}/`;
+    return localFiles.some((f) => f.name === p.model_key || f.name.startsWith(prefix));
+  }
+
+  /** Модель, зарегистрированная для файла (точное совпадение или каталог). */
+  function modelForFile(f) {
+    return models.find((m) => m.model_key === f.name
+      || f.name.startsWith(`${m.model_key}/`)) || null;
+  }
+
+  /** Роль, на которую назначена модель (из глобальных назначений). */
+  function assignedRoleOf(model) {
+    if (!model) return null;
+    const a = assignments.find((x) => x.model_id === model.id);
+    return a ? a.role : null;
+  }
+
+  function renderPresetCards() {
+    if (!presetHost) return;
+    if (!presets.length) {
+      presetHost.replaceChildren(h('div.small.muted', {
+        text: 'Пресеты недоступны — скачайте модель вручную ниже.',
+      }));
+      return;
+    }
+    const grid = h('div.grid-2');
+    for (const p of presets) {
+      const installed = presetInstalled(p);
+      const btn = h(installed ? 'button.btn.btn-secondary.btn-sm' : 'button.btn.btn-primary.btn-sm', {
+        type: 'button',
+        text: installed ? 'Переустановить' : 'Установить',
+      });
+      btn.addEventListener('click', async () => {
+        if (btn.disabled) return;
+        btn.disabled = true;
+        const label = btn.textContent;
+        btn.textContent = 'Устанавливаем…';
+        try {
+          const out = await request('/local-models/install', {
+            method: 'POST',
+            body: { preset: p.id },
+          });
+          const got = out.files.length
+            ? `Скачано файлов: ${out.files.length}`
+            : 'Файлы уже были на диске';
+          const who = out.assigned
+            ? ` → роль «${out.model.role}» назначена`
+            : '';
+          toast(`${p.title}: ${got}${who}`, 'success');
+          await Promise.all([loadLocalModels(), loadModels(), loadAssignments()]);
+        } catch (err) {
+          toast(errMsg(err, `Не удалось установить «${p.title}»`), 'error');
+        } finally {
+          btn.disabled = false;
+          btn.textContent = label;
+          renderPresetCards();
+        }
+      });
+
+      grid.append(
+        h('div.card', { style: { padding: '14px' } },
+          h('div.row-between', null,
+            h('div', null,
+              h('div.row', { style: { gap: '8px', alignItems: 'center' } },
+                h('strong', { text: p.title }),
+                roleBadge(p.role),
+                installed ? badge('установлено', 'success') : null,
+              ),
+              h('div.small.muted.mt-1', { text: p.description }),
+              h('div.small.muted.mt-1', { text: `≈ ${formatBytes(p.approx_size_bytes)}` }),
+            ),
+            btn,
+          ),
+        ),
+      );
+    }
+    presetHost.replaceChildren(grid);
+  }
+
+  function buildLocalTab() {
+    if (localTabBuilt) return;
+    localTabBuilt = true;
+
+    // ── Ручное скачивание: форма строится один раз, чтобы обновление
+    //    списка файлов не стирало введённый URL ──
     const sourceF = field({
       label: 'URL или HuggingFace repo',
       required: true,
-      placeholder: 'nvidia/nemotron-3.5-asr-streaming-0.6b',
-      hint: 'Прямой https://… URL файла, либо org/name на HuggingFace. Пример Nemotron ASR: repo nvidia/nemotron-3.5-asr-streaming-0.6b, filename nemotron-3.5-asr-streaming-0.6b.q8_0.gguf.',
+      placeholder: 'https://huggingface.co/org/name/resolve/main/model.gguf',
+      hint: 'Прямой https://… на файл (для HF — …/resolve/main/…), либо org/name. Для HF с несколькими файлами укажите Filename.',
     });
     const fileF = field({
       label: 'Filename (для HF, необязательно)',
       placeholder: 'model.q8_0.gguf',
-      hint: 'Пусто — скачать весь репозиторий через CLI hf. Скачивание больших файлов может занять минуты.',
+      hint: 'Пусто — скачать весь репозиторий через CLI hf (huggingface_hub).',
     });
     const nameF = field({
-      label: 'Имя файла (необязательно)',
-      placeholder: 'voice.onnx',
-      hint: 'Только для URL; пусто — имя из последнего сегмента URL.',
+      label: 'Путь в каталоге моделей (необязательно)',
+      placeholder: 'piper/voice.onnx',
+      hint: 'Можно указать вложенный путь; пусто — имя из URL.',
     });
 
     const dlBtn = h('button.btn.btn-primary', { type: 'button', text: 'Скачать' });
@@ -671,9 +791,19 @@ export function renderPage(root, params = {}) {
         sourceF.setError('Укажите URL или org/name');
         return;
       }
+      const isUrl = /^https?:\/\//i.test(source);
+      const isRepo = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(source);
+      if (!isUrl && !isRepo) {
+        sourceF.setError('Ожидается прямой http(s)-URL или репозиторий вида org/name');
+        return;
+      }
+      if (isUrl && /huggingface\.co\/[^/]+$/i.test(source)) {
+        sourceF.setError('Похоже на страницу HF, а не файл: добавьте /resolve/main/…');
+        return;
+      }
       if (dlBtn.disabled) return;
       dlBtn.disabled = true;
-      dlBtn.textContent = 'Скачиваем… (может занять время)';
+      dlBtn.textContent = 'Скачиваем… (большие файлы — минуты)';
       try {
         const body = { source };
         const filename = fileF.control.value.trim();
@@ -688,7 +818,9 @@ export function renderPage(root, params = {}) {
         await loadLocalModels();
         await loadModels();
       } catch (err) {
-        toast(errMsg(err, 'Не удалось скачать модель'), 'error');
+        const msg = errMsg(err, 'Не удалось скачать модель');
+        sourceF.setError(msg);
+        toast(msg, 'error');
       } finally {
         dlBtn.disabled = false;
         dlBtn.textContent = 'Скачать';
@@ -701,75 +833,109 @@ export function renderPage(root, params = {}) {
       onClick: () => loadLocalModels(),
     });
 
-    let localQuery = '';
-    const localSearch = searchModelsInput({
+    localSearchInput = searchModelsInput({
       placeholder: 'Поиск по имени файла…',
       onInput: (q) => {
         localQuery = q;
-        // перерисовать только таблицу файлов, не форму скачивания
         renderLocalTable();
       },
     });
-
-    const tableHost = h('div');
-
-    function renderLocalTable() {
-      const all = localFiles;
-      const rows = localQuery ? all.filter((f) => matchModelQuery(f, localQuery)) : all;
-      const body = rows.length
-        ? table({
-            columns: [
-              { key: 'name', label: 'Файл', mono: true },
-              { key: 'role', label: 'Роль', render: (f) => roleBadge(f.role) },
-              {
-                key: 'size_bytes',
-                label: 'Размер',
-                render: (f) => h('span', { text: formatBytes(f.size_bytes) }),
-              },
-              { key: 'actions', label: 'Действия', render: (f) => localActions(f) },
-            ],
-            rows,
-            emptyText: localQuery ? 'Ничего не найдено по запросу' : 'Нет файлов',
-          })
-        : emptyState({
-            icon: '⬇',
-            title: localQuery ? 'Ничего не найдено' : 'Локальных файлов нет',
-            description: localQuery
-              ? 'Измените поисковый запрос.'
-              : 'Скачайте модель по URL или с HuggingFace, затем добавьте её как модель и назначьте роль stt/tts.',
-          });
-
-      tableHost.replaceChildren(
-        h('div.card', null,
-          h('div.card-header', null,
-            h('div.card-title', { text: 'Файлы в MODELS_DIR' }),
-            h('div.row', null, localSearch, badge(`${rows.length}`, 'info'))
-          ),
-          h('div.card-body', null, body)
-        )
-      );
-    }
+    localTableHost = h('div');
+    presetHost = h('div');
 
     localHost.replaceChildren(
       h('div.card.mb-4', null,
         h('div.card-header', null,
-          h('div.card-title', { text: 'Скачать локальную модель' }),
-          refreshBtn
+          h('div.card-title', { text: 'Быстрый старт: рекомендуемые модели' }),
+          refreshBtn,
+        ),
+        h('div.card-body', null,
+          h('div.small.muted.mb-3', {
+            text: 'Один клик: скачать → зарегистрировать → назначить на роль. Голос и распознавание работают офлайн.',
+          }),
+          presetHost,
+        ),
+      ),
+      h('div.card.mb-4', null,
+        h('div.card-header', null,
+          h('div.card-title', { text: 'Скачать вручную' }),
         ),
         h('div.card-body', null,
           h('div.stack', null, sourceF, fileF, nameF, h('div', null, dlBtn)),
           h('div.small.muted.mt-3', {
-            text: 'После скачивания: «В модель…» → выбрать роль → в табе «Назначения ролей» указать активную. Python-зависимости: pip install -r scripts/requirements-voice.txt',
-          })
-        )
+            text: 'Готово: файл ляжет в каталог моделей — зарегистрируйте его кнопкой «В модель…» в таблице ниже. Python-зависимости голоса: pip install -r scripts/requirements-voice.txt',
+          }),
+        ),
       ),
-      tableHost
+      localTableHost,
     );
+    renderPresetCards();
     renderLocalTable();
   }
 
+  function renderLocalModels() {
+    buildLocalTab();
+    renderPresetCards();
+    renderLocalTable();
+  }
+
+  function renderLocalTable() {
+    if (!localTableHost) return;
+    const all = localFiles;
+    const rows = localQuery ? all.filter((f) => matchModelQuery(f, localQuery)) : all;
+    const body = rows.length
+      ? table({
+          columns: [
+            { key: 'name', label: 'Файл', mono: true },
+            { key: 'role', label: 'Роль', render: (f) => roleBadge(f.role) },
+            {
+              key: 'size_bytes',
+              label: 'Размер',
+              render: (f) => h('span', { text: formatBytes(f.size_bytes) }),
+            },
+            {
+              key: 'model',
+              label: 'Модель',
+              render: (f) => {
+                const m = modelForFile(f);
+                if (!m) return h('span.small.muted', { text: '—' });
+                const role = assignedRoleOf(m);
+                return h('div.row', { style: { gap: '6px' } },
+                  badge(m.display_name || m.model_key, 'success'),
+                  role ? badge(`назначена: ${role}`, 'info') : null,
+                );
+              },
+            },
+            { key: 'actions', label: 'Действия', render: (f) => localActions(f) },
+          ],
+          rows,
+          emptyText: localQuery ? 'Ничего не найдено по запросу' : 'Нет файлов',
+        })
+      : emptyState({
+          icon: '⬇',
+          title: localQuery ? 'Ничего не найдено' : 'Локальных файлов нет',
+          description: localQuery
+            ? 'Измените поисковый запрос.'
+            : 'Установите рекомендуемую модель в «Быстром старте» или скачайте файл вручную.',
+        });
+
+    localTableHost.replaceChildren(
+      h('div.card', null,
+        h('div.card-header', null,
+          h('div.card-title', { text: 'Файлы в MODELS_DIR' }),
+          h('div.row', null, localSearchInput, badge(`${rows.length}`, 'info'))
+        ),
+        h('div.card-body', null, body)
+      )
+    );
+  }
+
   function localActions(f) {
-    const asModelBtn = h('button.btn.btn-ghost.btn-sm', { type: 'button', text: 'В модель…' });
+    const registered = !!modelForFile(f);
+    const asModelBtn = h('button.btn.btn-ghost.btn-sm', {
+      type: 'button',
+      text: registered ? 'Настроить…' : 'В модель…',
+    });
     asModelBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       openRegisterLocal(f);
@@ -778,9 +944,14 @@ export function renderPage(root, params = {}) {
     const delBtn = h('button.btn.btn-danger.btn-sm', { type: 'button', text: 'Удалить' });
     delBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
+      const linked = models.filter((m) => m.model_key === f.name
+        || f.name.startsWith(`${m.model_key}/`));
+      const note = linked.length
+        ? ` Файлы используют модели: ${linked.map((m) => m.display_name).join(', ')} — они перестанут работать.`
+        : ' Связанных моделей нет.';
       const ok = await confirmModal({
         title: 'Удалить файл?',
-        message: `«${f.name}» будет удалён с диска. Связанные модели могут перестать работать.`,
+        message: `«${f.name}» будет удалён с диска.${note}`,
         confirmText: 'Удалить',
         danger: true,
       });
@@ -805,37 +976,42 @@ export function renderPage(root, params = {}) {
   function openRegisterLocal(f) {
     const lp = localProvider();
     if (!lp) {
-      toast('Сначала добавьте провайдера типа «Локальный»', 'warning');
+      toast('Провайдер «Локальный» не найден — он создаётся автоматически при установке пресета', 'warning');
       return;
     }
+    const existing = modelForFile(f);
     const roleF = field({
-      label: 'Роль', type: 'select', value: f.role || 'stt',
+      label: 'Роль', type: 'select', value: (existing && existing.role) || f.role || 'stt',
       options: MODEL_ROLES.map((r) => ({ value: r.value, label: r.title })),
+      hint: 'Роль определена по имени файла — измените, если нужно.',
     });
-    const nameF = field({ label: 'Отображаемое имя', value: f.name });
+    const nameF = field({ label: 'Отображаемое имя', value: (existing && existing.display_name) || f.name });
     const keyF = field({ label: 'Ключ модели (путь)', value: f.name, disabled: true });
 
     formModal({
-      title: 'Добавить локальную модель',
+      title: existing ? 'Настроить локальную модель' : 'Добавить локальную модель',
       body: h('div.stack', null, roleF, nameF, keyF),
-      submitLabel: 'Добавить',
+      submitLabel: existing ? 'Сохранить' : 'Добавить и назначить',
       onSubmit: async () => {
-        await request('/models', {
+        const role = roleF.control.value;
+        const saved = await request('/models', {
           method: 'POST',
           body: {
-            id: '',
+            id: existing ? existing.id : '',
             provider_id: lp.id,
-            role: roleF.control.value,
+            role,
             model_key: f.name,
             display_name: nameF.control.value.trim() || f.name,
             is_enabled: true,
             metadata: { local: true, size_bytes: f.size_bytes },
-            created_at: '',
           },
         });
-        toast('Модель добавлена — назначьте её в табе «Назначения ролей»', 'success');
-        await loadModels();
-        await loadAssignments();
+        await request(`/model-assignments/${role}`, {
+          method: 'PUT',
+          body: { model_id: saved.id },
+        });
+        toast(`Модель назначена на роль «${role}»`, 'success');
+        await Promise.all([loadModels(), loadAssignments(), loadLocalModels()]);
         return true;
       },
     });
