@@ -53,6 +53,8 @@ async fn main() -> AppResult<()> {
 
     let repos = Arc::new(infrastructure::db::repos::SqliteRepos::new(db.clone()));
     let services = Arc::new(application::Services::new(&config, repos, cipher.clone())?);
+    // Клон до move в state — для фонового прогрева LLM (см. ниже).
+    let warmup_services = services.clone();
 
     let state = AppState {
         config: Arc::new(config.clone()),
@@ -62,6 +64,10 @@ async fn main() -> AppResult<()> {
     };
 
     let app = routes::build(state);
+
+    // Прогрев локальной LLM: иначе первый ход диалога ждёт загрузку весов
+    // модели (единицы секунд на CPU). Фоном и не мешает старту.
+    tokio::spawn(async move { warmup_services.providers.warmup_llm().await });
 
     let addr = format!("{}:{}", config.server.host, config.server.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;

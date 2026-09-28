@@ -12,7 +12,8 @@ use crate::domain::entities::provider::{
     UserModelPreference,
 };
 use crate::domain::ports::{
-    AuditRepository, ChatModel, ModelCatalog, ProviderRepository, SpeechToText, TextToSpeech,
+    AuditRepository, ChatMessage, ChatModel, ChatRequest, ModelCatalog, ProviderRepository,
+    SpeechToText, TextToSpeech,
 };
 use crate::error::{AppError, AppResult};
 use crate::infrastructure::crypto::{mask_secret, SecretCipher};
@@ -900,6 +901,43 @@ impl ProviderService {
     pub async fn resolve_chat(&self) -> AppResult<(Arc<dyn ChatModel>, String)> {
         let (chat, model_key, _handle) = self.resolve_chat_detailed().await?;
         Ok((chat, model_key))
+    }
+
+    /// Прогрев назначенной LLM-модели при старте сервера.
+    ///
+    /// Загрузка весов локальной модели в Ollama занимает единицы секунд —
+    /// без прогрева первый ход диалога пользователя ждёт её целиком.
+    /// Работает только для локальных провайдеров (base_url на localhost),
+    /// чтобы не слать мусорные запросы в облачные API; ошибки гасятся —
+    /// прогрев не должен мешать старту.
+    pub async fn warmup_llm(&self) {
+        let (model, provider) = match self.assigned_model(ModelRole::Llm) {
+            Ok(v) => v,
+            Err(_) => return, // LLM не настроена — нечего греть
+        };
+        let is_local = provider.base_url.as_deref().is_some_and(|u| {
+            let u = u.to_ascii_lowercase();
+            u.starts_with("http://localhost")
+                || u.starts_with("http://127.0.0.1")
+                || u.starts_with("http://[::1]")
+        });
+        if !is_local {
+            return;
+        }
+        let (_p, handle) = match self.build_for(&provider.id) {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        let Some(chat) = handle.chat.clone() else {
+            return;
+        };
+        let request = ChatRequest::new(model.model_key.clone(), vec![ChatMessage::user("прогрев")])
+            .with_max_tokens(1);
+        match tokio::time::timeout(std::time::Duration::from_secs(90), chat.chat(request)).await {
+            Ok(Ok(_)) => tracing::info!(model = %model.model_key, "прогрев LLM-модели завершён"),
+            Ok(Err(err)) => tracing::debug!(error = %err, "прогрев LLM-модели не удался"),
+            Err(_) => tracing::debug!("прогрев LLM-модели: таймаут"),
+        }
     }
 
     /// Как [`resolve_chat`], но учитывает предпочтение пользователя `user_id`

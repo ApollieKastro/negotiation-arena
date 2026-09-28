@@ -35,9 +35,14 @@ const JUDGE_TIMEOUT: Duration = Duration::from_secs(45);
 const MAX_PLAYER_TEXT_CHARS: usize = 4000;
 
 /// Хвост истории диалога, который уходит в LLM собеседника (с учётом system
-/// и текущей реплики). Длинные сессии не должны раздувать prompt и latency:
-/// локальные модели держат контекст 4096 токенов.
-const MAX_HISTORY_TURNS: usize = 30;
+/// и текущей реплики). Реплики нужны только для связности ответов — цели,
+/// BATNA и правила и так лежат в системном промпте.
+///
+/// Лимит продиктован локальной моделью на CPU: обработка промпта у
+/// `gemma3:4b` идёт ~50–100 ток/с, поэтому длинный хвост добавлял ходу
+/// ~10–20 с. Десять реплик (5 последних ходов) держит prompt в районе
+/// 500–600 токенов почти без потери связности.
+const MAX_HISTORY_TURNS: usize = 10;
 
 /// Верхняя граница `limit` для истории сессий.
 const MAX_HISTORY_LIMIT: u32 = 200;
@@ -682,7 +687,12 @@ impl SessionService {
             // Реплики переговоров короткие: 512 токенов хватает с запасом
             // и в ~2 раза сокращает генерацию на локальной модели.
             .with_max_tokens(512);
+        let started = std::time::Instant::now();
         let response = chat.chat(request).await?;
+        tracing::debug!(
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "тайминг: ответ собеседника"
+        );
         // Провайдер может не вернуть usage — оцениваем ответ по длине (~4 chars/token).
         let tokens = response
             .usage
@@ -742,8 +752,11 @@ impl SessionService {
             ],
         )
         .with_temperature(0.0)
-        .with_max_tokens(120);
+        // JSON-ответ судьи ~40 токенов; 140 — запас, чтобы модель не
+        // обрезалась по limit на fence «```json» перед самим объектом.
+        .with_max_tokens(140);
 
+        let started = std::time::Instant::now();
         let response = match tokio::time::timeout(JUDGE_TIMEOUT, chat.chat(request)).await {
             Ok(Ok(response)) => response,
             Ok(Err(err)) => {
@@ -758,6 +771,10 @@ impl SessionService {
                 return None;
             }
         };
+        tracing::debug!(
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "тайминг: оценка судьи"
+        );
 
         let tokens = response
             .usage
