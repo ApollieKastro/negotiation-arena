@@ -473,8 +473,13 @@ impl SessionService {
                 auto_finished: Some(AutoFinishInfo {
                     outcome,
                     message: match outcome {
-                        DialogueOutcome::Agreement => "Собеседник подтвердил сделку — переговоры успешно завершены".to_string(),
-                        DialogueOutcome::WalkAway => "Собеседник отказался от сделки — переговоры прерваны".to_string(),
+                        DialogueOutcome::Agreement => {
+                            "Собеседник подтвердил сделку — переговоры успешно завершены"
+                                .to_string()
+                        }
+                        DialogueOutcome::WalkAway => {
+                            "Собеседник отказался от сделки — переговоры прерваны".to_string()
+                        }
                     },
                 }),
             });
@@ -920,11 +925,13 @@ impl SessionService {
         }
     }
 
-
-
     /// Определяет исход диалога по реплике собеседника.
     /// Возвращает Some(DialogueOutcome) если обнаружен сигнал согласия или отказа.
-    fn detect_dialogue_outcome(&self, partner_reply: &str, _scenario: &Scenario) -> Option<DialogueOutcome> {
+    fn detect_dialogue_outcome(
+        &self,
+        partner_reply: &str,
+        _scenario: &Scenario,
+    ) -> Option<DialogueOutcome> {
         let text = partner_reply.to_lowercase();
 
         // Согласие / сделка ЗАКЛЮЧЕНА (не обсуждается, а именно закрыта)
@@ -975,7 +982,6 @@ impl SessionService {
 
         None
     }
-
 }
 
 /// System-prompt собеседника из сценария.

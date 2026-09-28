@@ -27,7 +27,11 @@ fn python_bin() -> String {
         .ok()
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| {
-            if cfg!(windows) { "python".into() } else { "python3".into() }
+            if cfg!(windows) {
+                "python".into()
+            } else {
+                "python3".into()
+            }
         })
 }
 
