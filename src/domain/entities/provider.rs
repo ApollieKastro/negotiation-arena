@@ -119,15 +119,27 @@ fn private_ipv4(host: &str) -> bool {
 /// Модель, доступная у провайдера.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelRecord {
+    /// Пустой при создании — генерируется сервисом.
+    #[serde(default)]
     pub id: String,
     pub provider_id: String,
     pub role: ModelRole,
     pub model_key: String,
+    /// Пустой → равен `model_key` (заполняется сервисом).
+    #[serde(default)]
     pub display_name: String,
+    #[serde(default = "default_true")]
     pub is_enabled: bool,
     /// JSON с доп. данными: голоса, размер, примечания.
+    #[serde(default)]
     pub metadata: serde_json::Value,
+    /// Пустой при создании — генерируется сервисом.
+    #[serde(default)]
     pub created_at: String,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Какая модель используется по роли (`llm` / `stt` / `tts`).

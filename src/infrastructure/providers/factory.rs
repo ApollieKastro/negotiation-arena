@@ -43,10 +43,13 @@ impl std::fmt::Debug for ProviderHandle {
 
 /// Собирает адаптеры по записям провайдера из БД.
 ///
-/// Таймаут клиента — 120 c: STT/TTS могут отвечать долго.
+/// Два HTTP-клиента: `http` — инференс (LLM/голос, таймаут 120 c),
+/// `http_download` — скачивание файлов моделей (могут качаться десятки
+/// минут, общий таймаут их бы убивал).
 #[derive(Debug)]
 pub struct ProviderFactory {
     http: Client,
+    http_download: Client,
     models_dir: PathBuf,
 }
 
@@ -54,16 +57,28 @@ impl ProviderFactory {
     pub fn new(models_dir: impl Into<PathBuf>) -> AppResult<Self> {
         let http = Client::builder()
             .timeout(std::time::Duration::from_secs(120))
+            .connect_timeout(std::time::Duration::from_secs(10))
             .build()
             .map_err(|e| AppError::internal(format!("HTTP-клиент провайдеров: {e}")))?;
+        let http_download = Client::builder()
+            .timeout(std::time::Duration::from_secs(60 * 60))
+            .connect_timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| AppError::internal(format!("HTTP-клиент скачивания: {e}")))?;
         Ok(Self {
             http,
+            http_download,
             models_dir: models_dir.into(),
         })
     }
 
     pub fn http(&self) -> &Client {
         &self.http
+    }
+
+    /// Клиент для скачивания файлов моделей (длинный таймаут).
+    pub fn download_http(&self) -> &Client {
+        &self.http_download
     }
 
     pub fn models_dir(&self) -> &PathBuf {
@@ -154,7 +169,8 @@ impl ProviderFactory {
             }
             ProviderKind::Local => {
                 // Локальный каталог + subprocess STT/TTS (scripts/local_*.py).
-                let manager = LocalModelManager::new(self.models_dir.clone(), self.http.clone());
+                let manager =
+                    LocalModelManager::new(self.models_dir.clone(), self.http_download.clone());
                 handle.catalog = Some(Arc::new(LocalCatalog::new(manager)));
                 handle.stt = Some(Arc::new(LocalSpeechToText::new(
                     self.models_dir.clone(),

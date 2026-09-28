@@ -27,10 +27,17 @@ const FALLBACK_MAX_TURNS: u32 = 40;
 /// Таймаут запроса к LLM-судье. Превышение → ход считается на эвристике:
 /// оценка модели не должна задерживать диалог. Больше ответа собеседника:
 /// судья идёт параллельно, поэтому итоговая задержка хода — максимум из двух.
-const JUDGE_TIMEOUT: Duration = Duration::from_secs(20);
+/// 45 с: локальные модели на CPU при двойной нагрузке (собеседник + судья)
+/// укладываются в ~10–20 с, но под нагрузкой очереди запас нужен.
+const JUDGE_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// Максимальная длина реплики игрока в символах (защита от DoS и раздувания prompt).
 const MAX_PLAYER_TEXT_CHARS: usize = 4000;
+
+/// Хвост истории диалога, который уходит в LLM собеседника (с учётом system
+/// и текущей реплики). Длинные сессии не должны раздувать prompt и latency:
+/// локальные модели держат контекст 4096 токенов.
+const MAX_HISTORY_TURNS: usize = 30;
 
 /// Верхняя граница `limit` для истории сессий.
 const MAX_HISTORY_LIMIT: u32 = 200;
@@ -658,9 +665,11 @@ impl SessionService {
 
         let (chat, model_key) = self.providers.resolve_chat_for(user_id).await?;
 
-        let mut messages = Vec::with_capacity(history.len() + 2);
+        // Хвост истории: начало диалога (opening) модели уже не нужно.
+        let tail_from = history.len().saturating_sub(MAX_HISTORY_TURNS);
+        let mut messages = Vec::with_capacity(history.len() - tail_from + 2);
         messages.push(ChatMessage::system(system_prompt(scenario)));
-        for msg in history {
+        for msg in &history[tail_from..] {
             match msg.role {
                 MessageRole::Partner => messages.push(ChatMessage::assistant(msg.content.clone())),
                 MessageRole::Player => messages.push(ChatMessage::user(msg.content.clone())),
@@ -670,8 +679,9 @@ impl SessionService {
 
         let request = ChatRequest::new(model_key, messages)
             .with_temperature(0.7)
-            // Запас под русские реплики; reasoning-модели съедали 400 на «thinking».
-            .with_max_tokens(1024);
+            // Реплики переговоров короткие: 512 токенов хватает с запасом
+            // и в ~2 раза сокращает генерацию на локальной модели.
+            .with_max_tokens(512);
         let response = chat.chat(request).await?;
         // Провайдер может не вернуть usage — оцениваем ответ по длине (~4 chars/token).
         let tokens = response

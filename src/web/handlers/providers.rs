@@ -236,6 +236,33 @@ pub async fn delete_local_model(
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
+/// `GET /api/v1/local-models/presets` — проверенные пресеты для установки.
+///
+/// Публичный список (без сети и секретов); ставит файлы может только админ.
+pub async fn local_model_presets(
+    State(_state): State<AppState>,
+) -> Json<Vec<crate::application::provider::LocalModelPreset>> {
+    Json(crate::application::provider::ProviderService::list_presets().to_vec())
+}
+
+/// `POST /api/v1/local-models/install` — скачать + зарегистрировать +
+/// назначить модель одной операцией.
+///
+/// Body: `{ "preset": "piper-ru" }` **или**
+/// `{ "source": "https://…/file.bin", "role": "stt", "assign": true }`.
+pub async fn install_local_model(
+    State(state): State<AppState>,
+    actor: AuthUser,
+    AppJson(req): AppJson<crate::application::provider::InstallLocalModelRequest>,
+) -> AppResult<Json<crate::application::provider::InstallOutcome>> {
+    let outcome = state
+        .services
+        .providers
+        .install_local_model(actor.context(), req)
+        .await?;
+    Ok(Json(outcome))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct DeleteLocalModelQuery {
     pub name: String,

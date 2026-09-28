@@ -3,6 +3,8 @@
 
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+
 use crate::application::auth::AuthContext;
 use crate::domain::entities::model::{ModelDescriptor, ModelRole};
 use crate::domain::entities::provider::{
@@ -18,6 +20,158 @@ use crate::infrastructure::db::repos::SqliteRepos;
 use crate::infrastructure::providers::{
     DownloadLocalModelRequest, LocalModelFile, ProviderFactory, ProviderHandle,
 };
+
+// ── Пресеты локальных моделей (установка одной кнопкой) ──
+
+/// Файл пресета: откуда качать и куда положить в `MODELS_DIR`.
+#[derive(Debug, Clone, Serialize)]
+pub struct PresetFile {
+    /// Прямой URL файла (HuggingFace `…/resolve/main/…`).
+    pub source: &'static str,
+    /// Относительный путь назначения внутри `MODELS_DIR`.
+    pub dest: &'static str,
+}
+
+/// Готовый набор проверенной локальной модели.
+///
+/// Пресет закрывает весь путь: скачивание файлов → регистрация модели у
+/// локального провайдера → назначение на роль (если `assign`).
+#[derive(Debug, Clone, Serialize)]
+pub struct LocalModelPreset {
+    /// Идентификатор для `POST /local-models/install`.
+    pub id: &'static str,
+    pub title: &'static str,
+    pub description: &'static str,
+    pub role: ModelRole,
+    pub display_name: &'static str,
+    /// Ключ модели (путь в `MODELS_DIR`): файл либо каталог с весами.
+    pub model_key: &'static str,
+    /// Ориентировочный размер для UI.
+    pub approx_size_bytes: u64,
+    pub files: &'static [PresetFile],
+}
+
+const MB: u64 = 1024 * 1024;
+
+/// Проверенные офлайн-наборы: русский голос и распознавание речи.
+pub const LOCAL_PRESETS: &[LocalModelPreset] = &[
+    LocalModelPreset {
+        id: "piper-ru",
+        title: "Русский голос (Piper)",
+        description: "Синтез речи собеседника: естественный мужской голос ruslan, 63 МБ, работает офлайн.",
+        role: ModelRole::Tts,
+        display_name: "Piper ruslan (русский)",
+        model_key: "piper/ru_RU-ruslan-medium.onnx",
+        approx_size_bytes: 64 * MB,
+        files: &[
+            PresetFile {
+                source: "https://huggingface.co/rhasspy/piper-voices/resolve/main/ru/ru_RU/ruslan/medium/ru_RU-ruslan-medium.onnx",
+                dest: "piper/ru_RU-ruslan-medium.onnx",
+            },
+            PresetFile {
+                source: "https://huggingface.co/rhasspy/piper-voices/resolve/main/ru/ru_RU/ruslan/medium/ru_RU-ruslan-medium.onnx.json",
+                dest: "piper/ru_RU-ruslan-medium.onnx.json",
+            },
+        ],
+    },
+    LocalModelPreset {
+        id: "whisper-base",
+        title: "Распознавание речи (Whisper base)",
+        description: "Голосовой ввод: точная модель base, 148 МБ, русский и английский.",
+        role: ModelRole::Stt,
+        display_name: "faster-whisper base",
+        model_key: "faster-whisper-base",
+        approx_size_bytes: 148 * MB,
+        files: &[
+            PresetFile {
+                source: "https://huggingface.co/Systran/faster-whisper-base/resolve/main/model.bin",
+                dest: "faster-whisper-base/model.bin",
+            },
+            PresetFile {
+                source: "https://huggingface.co/Systran/faster-whisper-base/resolve/main/config.json",
+                dest: "faster-whisper-base/config.json",
+            },
+            PresetFile {
+                source: "https://huggingface.co/Systran/faster-whisper-base/resolve/main/tokenizer.json",
+                dest: "faster-whisper-base/tokenizer.json",
+            },
+            PresetFile {
+                source: "https://huggingface.co/Systran/faster-whisper-base/resolve/main/vocabulary.txt",
+                dest: "faster-whisper-base/vocabulary.txt",
+            },
+        ],
+    },
+    LocalModelPreset {
+        id: "whisper-tiny",
+        title: "Распознавание речи (Whisper tiny)",
+        description: "Лёгкая и быстрая альтернатива base: 77 МБ, если важнее скорость.",
+        role: ModelRole::Stt,
+        display_name: "faster-whisper tiny",
+        model_key: "faster-whisper-tiny",
+        approx_size_bytes: 77 * MB,
+        files: &[
+            PresetFile {
+                source: "https://huggingface.co/Systran/faster-whisper-tiny/resolve/main/model.bin",
+                dest: "faster-whisper-tiny/model.bin",
+            },
+            PresetFile {
+                source: "https://huggingface.co/Systran/faster-whisper-tiny/resolve/main/config.json",
+                dest: "faster-whisper-tiny/config.json",
+            },
+            PresetFile {
+                source: "https://huggingface.co/Systran/faster-whisper-tiny/resolve/main/tokenizer.json",
+                dest: "faster-whisper-tiny/tokenizer.json",
+            },
+            PresetFile {
+                source: "https://huggingface.co/Systran/faster-whisper-tiny/resolve/main/vocabulary.txt",
+                dest: "faster-whisper-tiny/vocabulary.txt",
+            },
+        ],
+    },
+];
+
+fn assign_by_default() -> bool {
+    true
+}
+
+/// Запрос установки локальной модели (`preset` **или** `source` + `role`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct InstallLocalModelRequest {
+    /// Идентификатор пресета из [`LOCAL_PRESETS`].
+    #[serde(default)]
+    pub preset: Option<String>,
+    /// Прямой URL или HF repo `org/name` (режим без пресета).
+    #[serde(default)]
+    pub source: Option<String>,
+    /// Файл внутри HF repo (режим без пресета).
+    #[serde(default)]
+    pub filename: Option<String>,
+    /// Имя/путь файла в `MODELS_DIR` (по умолчанию — из URL).
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Роль модели (обязателен без пресета).
+    #[serde(default)]
+    pub role: Option<ModelRole>,
+    /// Ключ модели (по умолчанию — путь файла).
+    #[serde(default)]
+    pub model_key: Option<String>,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    /// Назначить модель на роль сразу (по умолчанию `true`).
+    #[serde(default = "assign_by_default")]
+    pub assign: bool,
+}
+
+/// Результат установки: что скачано/пропущено, модель и назначение.
+#[derive(Debug, Clone, Serialize)]
+pub struct InstallOutcome {
+    /// Файлы, скачанные при этом вызове.
+    pub files: Vec<LocalModelFile>,
+    /// Файлы, которые уже были на диске (пропущены).
+    pub skipped: Vec<String>,
+    pub model: ModelRecord,
+    pub assigned: bool,
+}
 
 /// Управление провайдерами и моделями (RBAC: `ManageProviders`).
 pub struct ProviderService {
@@ -460,8 +614,200 @@ impl ProviderService {
     fn local_manager(&self) -> crate::infrastructure::providers::LocalModelManager {
         crate::infrastructure::providers::LocalModelManager::new(
             self.factory.models_dir().clone(),
-            self.factory.http().clone(),
+            // Скачивание — отдельным клиентом: модели качаются минутами,
+            // таймаут инференса (120 с) их бы убивал.
+            self.factory.download_http().clone(),
         )
+    }
+
+    // ── Установка локальных моделей одной кнопкой ──
+
+    /// Каталог проверенных пресетов (список статический, для GET).
+    pub fn list_presets() -> &'static [LocalModelPreset] {
+        LOCAL_PRESETS
+    }
+
+    /// Установка локальной модели: скачать → зарегистрировать → назначить.
+    ///
+    /// Два режима:
+    /// * `preset` — готовый набор из [`LOCAL_PRESETS`] (роль/ключи/файлы известны);
+    /// * `source` (+ `role`) — один файл по URL или HF repo.
+    ///
+    /// Уже существующие файлы не перекачиваются (повторная установка
+    /// быстрая и идемпотентная), модель регистрируется у локального
+    /// провайдера и при `assign` сразу назначается на роль.
+    pub async fn install_local_model(
+        &self,
+        actor: &AuthContext,
+        req: InstallLocalModelRequest,
+    ) -> AppResult<InstallOutcome> {
+        actor.require(super::Permission::ManageProviders)?;
+
+        // 1) Спецификация: набор файлов + роль + ключ модели.
+        let (files, role, model_key, display_name, preset_id) = match (&req.preset, &req.source) {
+            (Some(id), _) => {
+                let p = LOCAL_PRESETS
+                    .iter()
+                    .find(|p| p.id == *id)
+                    .ok_or_else(|| AppError::BadRequest(format!("неизвестный пресет: {id}")))?;
+                (
+                    p.files
+                        .iter()
+                        .map(|f| (f.source.to_string(), f.dest.to_string()))
+                        .collect::<Vec<_>>(),
+                    p.role,
+                    p.model_key.to_string(),
+                    p.display_name.to_string(),
+                    Some(p.id.to_string()),
+                )
+            }
+            (None, Some(source)) => {
+                let source = source.trim();
+                if source.is_empty() {
+                    return Err(AppError::BadRequest("укажите источник модели".into()));
+                }
+                let role = req.role.ok_or_else(|| {
+                    AppError::BadRequest("укажите роль модели (stt / tts / llm)".into())
+                })?;
+                let dest = req
+                    .name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .or_else(|| {
+                        req.filename
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(|f| {
+                                std::path::Path::new(f)
+                                    .file_name()
+                                    .map(|s| s.to_string_lossy().into_owned())
+                                    .unwrap_or_else(|| f.to_string())
+                            })
+                    })
+                    .or_else(|| {
+                        source
+                            .rsplit('/')
+                            .next()
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_string)
+                    })
+                    .ok_or_else(|| {
+                        AppError::BadRequest("не удалось вывести имя файла — укажите `name`".into())
+                    })?;
+                let display = req
+                    .display_name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(&dest)
+                    .to_string();
+                let key = req
+                    .model_key
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(&dest)
+                    .to_string();
+                (vec![(source.to_string(), dest)], role, key, display, None)
+            }
+            _ => return Err(AppError::BadRequest("укажите `preset` или `source`".into())),
+        };
+
+        // 2) Скачивание (уже существующие файлы пропускаются).
+        let manager = self.local_manager();
+        let mut installed = Vec::new();
+        let mut skipped = Vec::new();
+        for (source, dest) in &files {
+            let path = manager.root().join(dest);
+            let exists = std::fs::metadata(&path)
+                .map(|m| m.is_file() && m.len() > 0)
+                .unwrap_or(false);
+            if exists {
+                skipped.push(dest.clone());
+                continue;
+            }
+            let file = manager.download(source, dest).await?;
+            installed.push(file);
+        }
+        if installed.is_empty() && !skipped.is_empty() {
+            // Всё уже на диске — доходим только до регистрации/назначения.
+        } else if installed.is_empty() {
+            return Err(AppError::BadRequest(
+                "нечего скачивать — пустой набор файлов".into(),
+            ));
+        }
+
+        // 3) Регистрация модели у локального провайдера.
+        let provider = self.ensure_local_provider(actor)?;
+        let existing = self
+            .repos
+            .providers
+            .list_models(Some(&provider.id))?
+            .into_iter()
+            .find(|m| m.model_key == model_key);
+        let mut record = existing.unwrap_or(ModelRecord {
+            id: String::new(),
+            provider_id: provider.id.clone(),
+            role,
+            model_key: model_key.clone(),
+            display_name: display_name.clone(),
+            is_enabled: true,
+            metadata: serde_json::json!({}),
+            created_at: String::new(),
+        });
+        record.role = role;
+        record.display_name = display_name;
+        record.is_enabled = true;
+        record.metadata = serde_json::json!({ "local": true, "preset": preset_id });
+        let model = self.upsert_model(actor, record)?;
+
+        // 4) Назначение на роль — одна кнопка закрывает весь путь.
+        let mut assigned = false;
+        if req.assign {
+            self.assign_role(actor, role, &model.id)?;
+            assigned = true;
+        }
+
+        self.audit(
+            actor,
+            "local_model.install",
+            &model.model_key,
+            preset_id.as_deref().or(Some(files[0].0.as_str())),
+        );
+        Ok(InstallOutcome {
+            files: installed,
+            skipped,
+            model,
+            assigned,
+        })
+    }
+
+    /// Локальный провайдер (создаёт «Локальные модели» при первом use).
+    fn ensure_local_provider(&self, actor: &AuthContext) -> AppResult<Provider> {
+        if let Some(p) = self
+            .repos
+            .providers
+            .list()?
+            .into_iter()
+            .find(|p| p.kind == crate::domain::entities::model::ProviderKind::Local)
+        {
+            return Ok(p);
+        }
+        let provider = Provider {
+            id: String::new(),
+            name: "Локальные модели".into(),
+            kind: crate::domain::entities::model::ProviderKind::Local,
+            base_url: None,
+            api_key_encrypted: None,
+            api_key_hint: None,
+            is_enabled: true,
+            created_at: String::new(),
+            updated_at: None,
+        };
+        self.upsert(actor, provider, None)
     }
 
     /// Фактически подключённые модели пользователя — по всем трём ролям.
