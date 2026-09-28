@@ -461,7 +461,7 @@ impl SessionService {
         let auto_finish = self.detect_dialogue_outcome(&partner_reply, &scenario);
         if let Some(outcome) = auto_finish {
             // Завершаем сессию автоматически.
-            let (finished_session, _report) = self.finish(&actor, &session.id)?;
+            let (finished_session, _report) = self.finish(actor, &session.id)?;
             return Ok(TurnOutcome {
                 session: finished_session,
                 partner_reply,
