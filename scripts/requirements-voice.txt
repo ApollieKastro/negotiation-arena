@@ -8,6 +8,7 @@
 #   Альтернатива для .gguf/.nemo — nemo-speech CLI (см. HuggingFace model card).
 # Whisper (ggml/ct2): faster-whisper.
 # Piper (*.onnx голоса): piper-tts.
+# huggingface_hub — CLI `hf` для скачивания целых репозиториев из админки.
 #
 # GPU (CUDA) опционален; без него инференс идёт на CPU.
 
@@ -18,3 +19,4 @@ numpy
 soundfile
 faster-whisper
 piper-tts
+huggingface_hub

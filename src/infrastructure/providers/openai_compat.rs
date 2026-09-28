@@ -13,7 +13,7 @@ use crate::domain::ports::providers::{
 };
 use crate::error::{AppError, AppResult};
 
-use super::{http_error, join_url, read_json, transport_error};
+use super::{http_error, join_url, read_json, send_resilient, transport_error};
 
 /// HTTP-клиент для любого OpenAI-совместимого endpoint.
 #[derive(Debug)]
@@ -169,13 +169,11 @@ pub(crate) fn matches_role(model_key: &str, role: ModelRole) -> bool {
 impl ChatModel for OpenAiCompat {
     async fn chat(&self, request: ChatRequest) -> AppResult<ChatResponse> {
         let url = join_url(&self.base_url, "chat/completions");
-        let body = chat_request_json(&request);
 
-        let resp = self
-            .bearer(self.http.post(&url).json(&body))
-            .send()
-            .await
-            .map_err(|e| transport_error(&self.provider_name, e))?;
+        let resp = send_resilient(&self.provider_name, || {
+            self.bearer(self.http.post(&url).json(&chat_request_json(&request)))
+        })
+        .await?;
         let resp = self.require_success(resp).await?;
         let value = read_json(&self.provider_name, resp).await?;
         chat_response_json(&value)

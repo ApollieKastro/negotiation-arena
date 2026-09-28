@@ -253,6 +253,14 @@ fn api_v1_routes(limiter: RateLimiter) -> Router<AppState> {
             "/local-models/download",
             post(handlers::providers::download_local_model),
         )
+        .route(
+            "/local-models/presets",
+            get(handlers::providers::local_model_presets),
+        )
+        .route(
+            "/local-models/install",
+            post(handlers::providers::install_local_model),
+        )
         // ── Пользовательские предпочтения моделей ──
         .route("/model-preferences/me", get(handlers::model_prefs::list_me))
         .route(

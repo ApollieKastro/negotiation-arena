@@ -69,9 +69,8 @@ def stt_transformers(model_path: str, audio_path: str, language: str | None) -> 
     # Каталог модели или родитель файла веса.
     model_dir = model_path if os.path.isdir(model_path) else os.path.dirname(model_path)
     if not model_dir or not has_config(model_dir):
-        # Fallback: HF repo id из имени.
-        base = os.path.basename(model_path.rstrip("/"))
-        if "/" in model_path and os.path.isdir(model_path) is False:
+        # Fallback: HF repo id из пути (`org/name`).
+        if "/" in model_path and not os.path.isdir(model_path):
             model_dir = model_path
 
     device = 0 if _cuda_available() else -1
@@ -99,13 +98,9 @@ def stt_transformers(model_path: str, audio_path: str, language: str | None) -> 
             generate_kwargs["target_lang"] = lang
 
     try:
-        with open(audio_path, "rb") as f:
-            audio_bytes = f.read()
-        # Передаём path — pipeline сам декодирует через soundfile/ffmpeg.
+        # Path — pipeline сам декодирует через soundfile/ffmpeg.
         result = pipe(
-            {"raw": audio_bytes, "sampling_rate": 16000}
-            if False
-            else audio_path,
+            audio_path,
             generate_kwargs=generate_kwargs or None,
             chunk_length_s=30,
             stride_length_s=5,
@@ -164,15 +159,14 @@ def stt_faster_whisper(model_path: str, audio_path: str, language: str | None) -
             3,
         )
 
-    # Путь к ct2/файлу или размер из имени (tiny/base/…).
+    # Путь к каталогу/файлу весов — либо размер модели из имени (tiny/base/…).
     if os.path.isfile(model_path) or os.path.isdir(model_path):
-        source: str | str = model_path  # type: ignore[assignment]
-        size = "base"
+        source: str = model_path
     else:
         source = "base"
         for cand in ("tiny", "base", "small", "medium", "large-v3", "large-v2", "large"):
             if cand in model_path.lower():
-                size = cand
+                source = cand
                 break
 
     lang = None

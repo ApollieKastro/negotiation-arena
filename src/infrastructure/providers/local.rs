@@ -38,6 +38,9 @@ pub struct DownloadLocalModelRequest {
     pub name: Option<String>,
 }
 
+/// Лимит одного скачивания — защита диска от случайной ссылки на терабайты.
+pub const MAX_DOWNLOAD_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+
 /// Менеджер локальных моделей: рекурсивный список, удаление, скачивание.
 #[derive(Debug)]
 pub struct LocalModelManager {
@@ -97,7 +100,10 @@ impl LocalModelManager {
 
     /// Валидация относительного имени/пути: без `..`, без абсолютных путей,
     /// без пустых сегментов. Слэши в середине разрешены (вложенные HF/пайпы).
-    fn validate_rel_path(name: &str) -> AppResult<()> {
+    ///
+    /// `pub(crate)` — вызывается из сервиса до скачивания (install), чтобы
+    /// traversal-путь не проскочил мимо `download` через exists-пропуск.
+    pub(crate) fn validate_rel_path(name: &str) -> AppResult<()> {
         let name = name.trim();
         if name.is_empty() {
             return Err(AppError::BadRequest("пустое имя файла".into()));
@@ -161,6 +167,10 @@ impl LocalModelManager {
             if file_name.starts_with('.') {
                 continue; // .cache, .git, .lock
             }
+            // Незавершённые скачивания — не модели.
+            if file_name.ends_with(".part") {
+                continue;
+            }
             let path = entry.path();
             if file_type.is_dir() {
                 self.walk(&path, out)?;
@@ -220,18 +230,24 @@ impl LocalModelManager {
 
     /// Скачивает файл модели по URL (streaming на диск) в `MODELS_DIR`.
     ///
-    /// `name` — basename; вложенные пути не поддерживаются (для HF используйте
-    /// [`download_hf`]). HF resolve-URL работают как обычные URL.
+    /// `name` — относительный путь внутри каталога (вложенные пути вида
+    /// `piper/voice.onnx` разрешены: родительские каталоги создаются).
+    /// HF resolve-URL работают как обычные URL.
+    ///
+    /// Защита от типовых ошибок:
+    /// * HTML-страница вместо модели (битая ссылка, лендинг HF) → 400 с
+    ///   подсказкой, файл не сохраняется;
+    /// * лимит [`MAX_DOWNLOAD_BYTES`] — защита от заливки диска;
+    /// * при сбое временный `.part` удаляется, сирот в каталоге не остаётся.
     pub async fn download(&self, url: &str, name: &str) -> AppResult<LocalModelFile> {
         let name = name.trim();
-        if name.contains('/') || name.contains('\\') {
-            return Err(AppError::BadRequest(
-                "имя файла не должно содержать path-разделители (для HF каталогов — download_hf)"
-                    .into(),
-            ));
-        }
         Self::validate_rel_path(name)?;
-        std::fs::create_dir_all(&self.root)?;
+        let path = self.root.join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        } else {
+            std::fs::create_dir_all(&self.root)?;
+        }
 
         let resp = self
             .http
@@ -243,26 +259,88 @@ impl LocalModelManager {
             return Err(http_error("local", resp).await);
         }
 
-        let path = self.root.join(name);
+        // Лендинг/страница ошибки вместо файла: ловим до записи на диск.
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if content_type.starts_with("text/html") {
+            return Err(AppError::BadRequest(
+                "по ссылке HTML-страница, а не модель: укажите прямой файл \
+                 (для HuggingFace — ссылку вида `…/resolve/main/…`)"
+                    .into(),
+            ));
+        }
+        if let Some(len) = resp.content_length() {
+            if len > MAX_DOWNLOAD_BYTES {
+                return Err(AppError::BadRequest(format!(
+                    "файл слишком большой: {} МБ (лимит {} ГБ)",
+                    len / (1024 * 1024),
+                    MAX_DOWNLOAD_BYTES / (1024 * 1024 * 1024)
+                )));
+            }
+        }
+
         let tmp = self.root.join(format!("{name}.part"));
-        let mut file = std::fs::File::create(&tmp)?;
+        let result = Self::write_stream(resp, &tmp, name).await;
+        match result {
+            Ok(total) => {
+                // Первые байты: HTML/пустой файл — не модель.
+                if total == 0 || Self::looks_like_html(&tmp)? {
+                    let _ = std::fs::remove_file(&tmp);
+                    return Err(AppError::BadRequest(
+                        "скачанный файл пуст или содержит HTML-страницу — \
+                         проверьте ссылку (нужен прямой файл модели)"
+                            .into(),
+                    ));
+                }
+                std::fs::rename(&tmp, &path)?;
+                let role = Self::guess_role(name);
+                Ok(LocalModelFile {
+                    name: name.to_string(),
+                    size_bytes: total,
+                    role,
+                })
+            }
+            Err(err) => {
+                let _ = std::fs::remove_file(&tmp);
+                Err(err)
+            }
+        }
+    }
+
+    /// Пишет поток ответа в `tmp`; возвращает размер в байтах.
+    async fn write_stream(resp: reqwest::Response, tmp: &Path, name: &str) -> AppResult<u64> {
+        use std::io::Write;
+        let mut file = std::fs::File::create(tmp)?;
         let mut stream = resp.bytes_stream();
         let mut total: u64 = 0;
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|e| transport_error("local", e))?;
-            use std::io::Write;
-            file.write_all(&chunk)?;
             total += chunk.len() as u64;
+            if total > MAX_DOWNLOAD_BYTES {
+                return Err(AppError::BadRequest(format!(
+                    "превышен лимит скачивания ({} ГБ) для `{name}`",
+                    MAX_DOWNLOAD_BYTES / (1024 * 1024 * 1024)
+                )));
+            }
+            file.write_all(&chunk)?;
         }
-        drop(file);
-        std::fs::rename(&tmp, &path)?;
+        file.flush()?;
+        Ok(total)
+    }
 
-        let role = Self::guess_role(name);
-        Ok(LocalModelFile {
-            name: name.to_string(),
-            size_bytes: total,
-            role,
-        })
+    /// Начинается ли файл на diska на `<!doctype` / `<html` (без учёта регистра).
+    fn looks_like_html(path: &Path) -> AppResult<bool> {
+        use std::io::Read;
+        let mut head = [0u8; 64];
+        let n = std::fs::File::open(path)?.read(&mut head)?;
+        let text = String::from_utf8_lossy(&head[..n])
+            .trim_start()
+            .to_lowercase();
+        Ok(text.starts_with("<!doctype") || text.starts_with("<html"))
     }
 
     /// Скачивание с HuggingFace: `repo_id` (`org/name`) + опциональный файл.

@@ -87,6 +87,41 @@ pub(crate) fn transport_error(provider: &str, err: reqwest::Error) -> AppError {
     AppError::upstream(provider, format!("запрос не выполнен: {err}"))
 }
 
+/// Транспортные ошибки, при которых имеет смысл повторить запрос:
+/// обрыв соединения (локальный Ollama/LM Studio перезапускается) и таймаут.
+fn is_retryable_transport(err: &reqwest::Error) -> bool {
+    err.is_connect() || err.is_timeout() || err.is_body()
+}
+
+/// `send()` с одним повтором при транспортной ошибке.
+///
+/// `build` строит запрос заново на каждой попытке (тело сериализуется
+/// повторно). Повтор закрывает типовую картину «Ollama перезапустился /
+/// модель догружается и роняет соединение» — ход диалога не падает с 502.
+pub(crate) async fn send_resilient(
+    provider: &str,
+    mut build: impl FnMut() -> reqwest::RequestBuilder,
+) -> AppResult<reqwest::Response> {
+    const ATTEMPTS: u32 = 2;
+    let mut attempt = 1;
+    loop {
+        match build().send().await {
+            Ok(resp) => return Ok(resp),
+            Err(err) if attempt < ATTEMPTS && is_retryable_transport(&err) => {
+                tracing::warn!(
+                    provider,
+                    attempt,
+                    error = %err,
+                    "транспортная ошибка запроса к провайдеру, повторяем"
+                );
+                attempt += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+            }
+            Err(err) => return Err(transport_error(provider, err)),
+        }
+    }
+}
+
 /// Читает JSON-тело успешного ответа; не-JSON — ошибка провайдера.
 pub(crate) async fn read_json(
     provider: &str,

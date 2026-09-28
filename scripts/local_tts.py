@@ -27,17 +27,13 @@ def find_onnx(path: str) -> str:
         return path
     if os.path.isdir(path):
         hits: list[str] = []
-        for root, _dirs, files in os.walk(path):
+        for root, dirs, files in os.walk(path):
+            dirs.sort()  # детерминированный обход
             for name in sorted(files):
-                if name.endswith(".onnx") and not name.endswith(".onnx.data"):
-                    # .onnx.json — конфиг, пропускаем; веса — .onnx
-                    if name.endswith(".onnx.json"):
-                        continue
+                # Веса Piper — ровно `*.onnx` (`.onnx.json` конфиг, `.onnx.data` шард).
+                if name.endswith(".onnx") and not name.endswith((".onnx.data", ".onnx.json")):
                     hits.append(os.path.join(root, name))
-        if len(hits) == 1:
-            return hits[0]
         if hits:
-            # Берём первый (обычно единственный голос в выкачанном каталоге).
             return hits[0]
     die(f"TTS: не найден .onnx голос по пути {path}", 2)
 
@@ -69,26 +65,18 @@ def main() -> None:
     buf = io.BytesIO()
     try:
         with wave.open(buf, "wb") as wf:
-            # piper >= 1.3: synthesize_wav; старые API — synthesize
+            # piper >= 1.3: synthesize_wav; старые API — сырой PCM-поток.
             if hasattr(voice, "synthesize_wav"):
                 voice.synthesize_wav(text, wf)
+            elif hasattr(voice, "synthesize_stream_raw"):
+                raw = b"".join(voice.synthesize_stream_raw(text))
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                cfg = getattr(voice, "config", None)
+                wf.setframerate(cfg.sample_rate if cfg else 22050)
+                wf.writeframes(raw)
             else:
-                for chunk in voice.synthesize(text):
-                    # stream API
-                    pass
-                # Fallback через PCM → wave
-                if hasattr(voice, "synthesize_stream_raw"):
-                    import numpy as np
-
-                    raw = b"".join(voice.synthesize_stream_raw(text))
-                    wf.setnchannels(1)
-                    wf.setsampwidth(2)
-                    wf.setframerate(getattr(voice, "config", None).sample_rate
-                                    if getattr(voice, "config", None)
-                                    else 22050)
-                    wf.writeframes(raw)
-                else:
-                    die("piper: неподдерживаемый API synthesize", 2)
+                die("piper: неподдерживаемый API synthesize", 2)
     except Exception as e:  # noqa: BLE001
         die(f"piper: synthesize failed: {e}", 2)
 
