@@ -48,16 +48,40 @@
 
 ```bash
 # 1. Установить Ollama → https://ollama.com
-ollama pull qwen3:4b        # или llama3.2:3b, qwen2.5:7b
+ollama pull qwen2.5:3b     # проверенная связка: быстрый, русский ок
 # 2. .env проекта
 OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
-OLLAMA_MODEL=qwen3:4b
+OLLAMA_MODEL=qwen2.5:3b
 # 3. cargo run — сид создаст провайдера (см. .env.example)
 ```
 
 Или вручную: **Провайдеры → Добавить** → тип «OpenAI-совместимый», Base URL `http://127.0.0.1:11434/v1`, **API-ключ не нужен** (localhost) → Discover → назначить роль `llm`.
 
-**Какие модели Ollama подойдут:** лёгкие чат-модели 3–8B (`qwen3:4b`, `llama3.2:3b`, `gemma3:4b`) — хватает для коротких реплик 1–4 предложений; 14B+ лучше, если хватает RAM/VRAM.
+**Какие модели Ollama подойдут:** лёгкие instruct-модели 3–8B (`qwen2.5:3b/7b`,
+`llama3.2:3b`) — хватает для коротких реплик 1–4 предложений. Чего **не брать**:
+
+- **reasoning-модели** (`qwen3`, `qwen3.5`) — через `/v1` их `think:false`
+  игнорируется, весь `max_tokens` уходит в «thinking» и ответ приходит пустым;
+- **SWA-модели** (`gemma3:*`) — llama.cpp не кэширует префикс их промпта
+  («forcing full prompt re-processing due to SWA»), каждый ход заново
+  гоняет все токены промпта: на CPU ход растягивается до 20–30 с.
+
+Скорость на CPU: учитывайте, что обработка промпта у 3–4B идёт ~50–100 ток/с —
+длинная история диалога стоит ходу секунд (в приложении хвост истории
+ограничен 10 репликами, судья получает 4 последние).
+
+**Настройки systemd** (необязательно, `/etc/systemd/system/ollama.service.d/override.conf`):
+
+```ini
+[Service]
+# 1 слот: два параллельных запроса (собеседник + судья) на CPU делят потоки
+# и медленнее, чем последовательная очередь с одним слотом на все ядра.
+Environment="OLLAMA_NUM_PARALLEL=1"
+Environment="OLLAMA_KEEP_ALIVE=10m"
+Environment="OLLAMA_CONTEXT_LENGTH=4096"
+```
+
+После правки: `sudo systemctl daemon-reload && sudo systemctl restart ollama`.
 
 ### 2.3 Демо (mock)
 
@@ -202,7 +226,7 @@ curl -L "$B.json" -o models/piper/ru_RU-ruslan-medium.onnx.json
 | Показать демо за 2 минуты | Mock LLM, голос не нужен |
 | Дешёвый умный диалог | Groq `llama-3.3-70b` или OpenAI `gpt-4o-mini` |
 | Много моделей одним ключом | OpenRouter |
-| Приватно и бесплатно (текст) | Ollama `qwen3:4b` / `llama3.2:3b` |
+| Приватно и бесплатно (текст) | Ollama `qwen2.5:3b` / `llama3.2:3b` |
 | Лучший русский голос | ElevenLabs `eleven_multilingual_v2` |
 | Дешёвый облачный голос | OpenAI `tts-1` |
 | Быстрый русский STT в облаке | Groq `whisper-large-v3-turbo` |
