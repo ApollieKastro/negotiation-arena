@@ -136,7 +136,7 @@ fn seed_mock_llm(repos: &SqliteRepos) -> AppResult<()> {
 /// Локальный Ollama: провайдер `openai_compatible` + модель, без API-ключа.
 ///
 /// Включается только при заданном `OLLAMA_BASE_URL` (пусто/нет — сид пропускается).
-/// Модель: `OLLAMA_MODEL` (default `qwen3.5:4b`).
+/// Модель: `OLLAMA_MODEL` (default `gemma3:4b`).
 /// Назначение роли `llm`:
 /// * `OLLAMA_SEED_ASSIGN=1` — всегда переключать на Ollama при старте;
 /// * иначе — только если роли `llm` ещё нет.
@@ -148,7 +148,7 @@ fn seed_ollama(repos: &SqliteRepos) -> AppResult<()> {
     let model_key = std::env::var("OLLAMA_MODEL")
         .ok()
         .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| "qwen3.5:4b".into())
+        .unwrap_or_else(|| "gemma3:4b".into())
         .trim()
         .to_string();
     let force = matches!(
@@ -197,13 +197,27 @@ fn seed_ollama_with(
         tracing::info!(base = %base, "сид: провайдер Ollama (openai_compatible, без ключа)");
     }
 
-    if let Some(mut model) = repos.providers.get_model(OLLAMA_MODEL_ID)? {
-        // Модель уже есть — синхронизируем model_key, если сменили OLLAMA_MODEL.
+    // Модель ищем и по id, и по уникальному ключу (provider_id, role, model_key):
+    // админ мог переименовать/пересоздать запись вручную — сид в этом случае
+    // переиспользует существующую строку, а не падает на UNIQUE-constraint.
+    let by_key = repos
+        .providers
+        .list_models(Some(OLLAMA_PROVIDER_ID))?
+        .into_iter()
+        .find(|m| m.role == ModelRole::Llm && m.model_key == model_key);
+
+    let target_id = if let Some(model) = by_key {
+        // Уже зарегистрирована (прошлым сидом или админом) — берём её id.
+        model.id
+    } else if let Some(mut model) = repos.providers.get_model(OLLAMA_MODEL_ID)? {
+        // Фиксированный id есть, но с другим ключом: синхронизируем.
+        // Конфликт невозможен — совпадений по (provider, role, key) нет выше.
         if model.model_key != model_key {
             model.model_key = model_key.to_string();
             model.display_name = format!("Ollama · {model_key}");
             repos.providers.upsert_model(&model)?;
         }
+        model.id
     } else {
         repos.providers.upsert_model(&ModelRecord {
             id: OLLAMA_MODEL_ID.into(),
@@ -217,24 +231,23 @@ fn seed_ollama_with(
             }),
             created_at: now,
         })?;
-    }
+        OLLAMA_MODEL_ID.to_string()
+    };
 
     let assignments = repos.providers.role_assignments()?;
     let has_llm = assignments.iter().any(|a| a.role == ModelRole::Llm);
     let already = assignments
         .iter()
-        .any(|a| a.role == ModelRole::Llm && a.model_id == OLLAMA_MODEL_ID);
+        .any(|a| a.role == ModelRole::Llm && a.model_id == target_id);
 
     if already {
         return Ok(());
     }
     if force_assign || !has_llm {
         // force: админ явно просит Ollama; иначе — только пустая роль.
-        repos
-            .providers
-            .set_role_assignment("llm", OLLAMA_MODEL_ID)?;
+        repos.providers.set_role_assignment("llm", &target_id)?;
         tracing::info!(
-            model = OLLAMA_MODEL_ID,
+            model = %target_id,
             key = %model_key,
             force = force_assign,
             "назначена Ollama LLM на роль llm"
@@ -566,6 +579,84 @@ mod tests {
             assignments.iter().all(|a| a.role != ModelRole::Llm),
             "после ручного снятия seed не должен восстанавливать llm"
         );
+    }
+
+    #[test]
+    fn ollama_seed_reuses_admin_model_with_same_key() {
+        // Админ зарегистрировал модель Ollama вручную (свой id, тот же
+        // провайдер+ключ). Сид не должен падать на UNIQUE(provider, role, key)
+        // и не должен плодить дубликат — назначение идёт на запись админа.
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.run_migrations().unwrap();
+        run(&db).unwrap(); // demo-mock на llm, провайдера ollama ещё нет
+
+        let repos = SqliteRepos::new(db.clone());
+        let base = "http://127.0.0.1:11434/v1";
+        repos
+            .providers
+            .upsert(&Provider {
+                id: OLLAMA_PROVIDER_ID.into(),
+                name: "Ollama".into(),
+                kind: ProviderKind::OpenAiCompatible,
+                base_url: Some(base.into()),
+                api_key_encrypted: None,
+                api_key_hint: None,
+                is_enabled: true,
+                created_at: chrono::Utc::now().to_rfc3339(),
+                updated_at: None,
+            })
+            .unwrap();
+
+        let admin_model_id = "admin-gemma-4b";
+        repos
+            .providers
+            .upsert_model(&ModelRecord {
+                id: admin_model_id.into(),
+                provider_id: OLLAMA_PROVIDER_ID.into(),
+                role: ModelRole::Llm,
+                model_key: "gemma3:4b".into(),
+                display_name: "Gemma 4B".into(),
+                is_enabled: true,
+                metadata: serde_json::json!({}),
+                created_at: chrono::Utc::now().to_rfc3339(),
+            })
+            .unwrap();
+
+        seed_ollama_with(&repos, base, "gemma3:4b", true).unwrap();
+
+        let models = repos
+            .providers
+            .list_models(Some(OLLAMA_PROVIDER_ID))
+            .unwrap();
+        assert_eq!(
+            models.iter().filter(|m| m.model_key == "gemma3:4b").count(),
+            1,
+            "дубликат модели создаваться не должен: {models:?}"
+        );
+        assert!(
+            repos
+                .providers
+                .get_model(OLLAMA_MODEL_ID)
+                .unwrap()
+                .is_none(),
+            "фиксированный id не создаётся, когда ключ уже зарегистрирован"
+        );
+
+        let assignments = repos.providers.role_assignments().unwrap();
+        assert!(
+            assignments
+                .iter()
+                .any(|a| a.role == ModelRole::Llm && a.model_id == admin_model_id),
+            "force-назначение должно указывать на существующую запись: {assignments:?}"
+        );
+
+        // Идемпотентно: повторный сид ничего не меняет.
+        seed_ollama_with(&repos, base, "gemma3:4b", true).unwrap();
+        let models2 = repos
+            .providers
+            .list_models(Some(OLLAMA_PROVIDER_ID))
+            .unwrap();
+        assert_eq!(models.len(), models2.len());
     }
 
     fn repos_count(db: &Arc<Database>) -> usize {
