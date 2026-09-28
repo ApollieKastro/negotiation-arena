@@ -100,7 +100,10 @@ impl LocalModelManager {
 
     /// Валидация относительного имени/пути: без `..`, без абсолютных путей,
     /// без пустых сегментов. Слэши в середине разрешены (вложенные HF/пайпы).
-    fn validate_rel_path(name: &str) -> AppResult<()> {
+    ///
+    /// `pub(crate)` — вызывается из сервиса до скачивания (install), чтобы
+    /// traversal-путь не проскочил мимо `download` через exists-пропуск.
+    pub(crate) fn validate_rel_path(name: &str) -> AppResult<()> {
         let name = name.trim();
         if name.is_empty() {
             return Err(AppError::BadRequest("пустое имя файла".into()));

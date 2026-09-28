@@ -717,7 +717,15 @@ impl ProviderService {
             _ => return Err(AppError::BadRequest("укажите `preset` или `source`".into())),
         };
 
-        // 2) Скачивание (уже существующие файлы пропускаются).
+        // 2) Пути назначения — только внутри MODELS_DIR. Проверяем до
+        //    скачивания: иначе traversal-имя (`../file`) за пределами root
+        //    считается «уже существующим», пропускается и уходит в
+        //    регистрацию модели без валидации.
+        for (_, dest) in &files {
+            crate::infrastructure::providers::LocalModelManager::validate_rel_path(dest)?;
+        }
+
+        // 3) Скачивание (уже существующие файлы пропускаются).
         let manager = self.local_manager();
         let mut installed = Vec::new();
         let mut skipped = Vec::new();
@@ -730,7 +738,19 @@ impl ProviderService {
                 skipped.push(dest.clone());
                 continue;
             }
-            let file = manager.download(source, dest).await?;
+            // URL — напрямую; HF repo id (`org/name`) — через CLI/resolve,
+            // как и в `download_local_model` (иначе reqwest падает на
+            // «не-URL» и install ломает свой контракт).
+            let file = if crate::infrastructure::providers::local::is_hf_repo_id(source)
+                && !source.starts_with("http://")
+                && !source.starts_with("https://")
+            {
+                manager
+                    .download_hf(source, req.filename.as_deref(), Some(dest))
+                    .await?
+            } else {
+                manager.download(source, dest).await?
+            };
             installed.push(file);
         }
         if installed.is_empty() && !skipped.is_empty() {
@@ -741,7 +761,7 @@ impl ProviderService {
             ));
         }
 
-        // 3) Регистрация модели у локального провайдера.
+        // 4) Регистрация модели у локального провайдера.
         let provider = self.ensure_local_provider(actor)?;
         let existing = self
             .repos
@@ -765,7 +785,7 @@ impl ProviderService {
         record.metadata = serde_json::json!({ "local": true, "preset": preset_id });
         let model = self.upsert_model(actor, record)?;
 
-        // 4) Назначение на роль — одна кнопка закрывает весь путь.
+        // 5) Назначение на роль — одна кнопка закрывает весь путь.
         let mut assigned = false;
         if req.assign {
             self.assign_role(actor, role, &model.id)?;

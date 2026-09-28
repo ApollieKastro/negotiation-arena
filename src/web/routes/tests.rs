@@ -1931,6 +1931,211 @@ async fn local_models_download_and_delete_roundtrip() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+// ── Local models: пресеты и установка одной кнопкой ────────────
+
+#[tokio::test]
+async fn local_model_presets_endpoint_is_public_and_lists_checked_sets() {
+    let app = TestApp::new();
+
+    // Публичный список (без сети и токена) — так задумано: ставит только админ.
+    let (status, body) = app
+        .call("GET", "/api/v1/local-models/presets", None, None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let arr = body.as_array().expect("presets — массив");
+    assert!(arr.len() >= 3, "ожидалось ≥3 пресетов: {body}");
+
+    let ids: Vec<&str> = arr.iter().filter_map(|p| p["id"].as_str()).collect();
+    for expected in ["piper-ru", "whisper-base", "whisper-tiny"] {
+        assert!(ids.contains(&expected), "нет пресета {expected}: {ids:?}");
+    }
+    for p in arr {
+        assert!(p["title"].is_string(), "{p}");
+        assert!(p["model_key"].is_string(), "{p}");
+        assert!(
+            ["llm", "stt", "tts"].contains(&p["role"].as_str().unwrap_or("")),
+            "некорректная роль: {p}"
+        );
+        assert!(
+            p["files"].as_array().is_some_and(|f| !f.is_empty()),
+            "пресет без файлов: {p}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn local_model_install_requires_admin_and_validates_request() {
+    let app = TestApp::new();
+    let admin = app.admin_token().await;
+    let user = app.user_token().await;
+    let install = "/api/v1/local-models/install";
+
+    // Без токена → 401.
+    let (status, _) = app
+        .call("POST", install, Some(json!({ "preset": "piper-ru" })), None)
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // Обычный пользователь → 403.
+    let (status, body) = app
+        .call(
+            "POST",
+            install,
+            Some(json!({ "preset": "piper-ru" })),
+            Some(&user),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+
+    // Ни preset, ни source → 400.
+    let (status, body) = app
+        .call("POST", install, Some(json!({})), Some(&admin))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .is_some_and(|m| m.contains("preset") && m.contains("source")),
+        "{body}"
+    );
+
+    // Неизвестный пресет → 400 (до скачивания).
+    let (status, body) = app
+        .call(
+            "POST",
+            install,
+            Some(json!({ "preset": "no-such-preset" })),
+            Some(&admin),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("пресет"),
+        "{body}"
+    );
+
+    // Source без роли → 400 (до скачивания, сеть не трогаем).
+    let (status, body) = app
+        .call(
+            "POST",
+            install,
+            Some(json!({ "source": "https://example.com/x.bin" })),
+            Some(&admin),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["error"].as_str().unwrap_or_default().contains("роль"),
+        "{body}"
+    );
+
+    // Traversal в name → 400 до скачивания/регистрации.
+    let (status, body) = app
+        .call(
+            "POST",
+            install,
+            Some(json!({
+                "source": "https://example.com/x.bin",
+                "name": "../escape.bin",
+                "role": "tts"
+            })),
+            Some(&admin),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("traversal"),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn local_model_install_downloads_registers_and_assigns_idempotently() {
+    use axum::routing::get as route_get;
+    let async_handler = || async { b"na-install-bytes".to_vec() };
+    let mock = crate::infrastructure::providers::testkit::spawn(
+        axum::Router::new().route("/voice.bin", route_get(async_handler)),
+    )
+    .await;
+
+    let app = TestApp::new();
+    let admin = app.admin_token().await;
+    let install = "/api/v1/local-models/install";
+    let spec = json!({
+        "source": format!("{mock}/voice.bin"),
+        // Вложенный путь — поддерживается (как у HF-пресетов).
+        "name": "na-install/voice.bin",
+        "role": "tts",
+        "model_key": "na-install-test-voice",
+        "display_name": "Na Install Voice"
+    });
+
+    // Установка: скачать → зарегистрировать → назначить.
+    let (status, body) = app
+        .call("POST", install, Some(spec.clone()), Some(&admin))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["assigned"], true, "{body}");
+    assert_eq!(body["model"]["role"], "tts", "{body}");
+    assert_eq!(
+        body["model"]["model_key"], "na-install-test-voice",
+        "{body}"
+    );
+    assert_eq!(body["model"]["is_enabled"], true, "{body}");
+    assert_eq!(body["files"].as_array().map(Vec::len), Some(1), "{body}");
+    assert_eq!(body["skipped"].as_array().map(Vec::len), Some(0), "{body}");
+
+    // Файл в каталоге.
+    let (status, body) = app
+        .call("GET", "/api/v1/local-models", None, Some(&admin))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let names: Vec<&str> = body
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|f| f["name"].as_str()).collect())
+        .unwrap_or_default();
+    assert!(names.contains(&"na-install/voice.bin"), "{body}");
+
+    // Роль tts назначена на новую модель.
+    let (status, body) = app
+        .call("GET", "/api/v1/model-assignments", None, Some(&admin))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        body.as_array()
+            .is_some_and(|a| a.iter().any(|x| x["role"] == "tts")),
+        "роль tts не назначена: {body}"
+    );
+
+    // Повторная установка идемпотентна: файл не качается, назначение остаётся.
+    let (status, body) = app.call("POST", install, Some(spec), Some(&admin)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["files"].as_array().map(Vec::len), Some(0), "{body}");
+    assert_eq!(body["assigned"], true, "{body}");
+    let skipped: Vec<&str> = body["skipped"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|s| s.as_str()).collect())
+        .unwrap_or_default();
+    assert!(skipped.contains(&"na-install/voice.bin"), "{body}");
+
+    // Убираем за собой (файл — на общей дискете MODELS_DIR).
+    let (status, body) = app
+        .call(
+            "DELETE",
+            "/api/v1/local-models?name=na-install/voice.bin",
+            None,
+            Some(&admin),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
 // ── Профиль: логин, пароль, аватар ─────────────────────────────
 
 /// Собирает multipart/form-data тело с одним файловым полем.
