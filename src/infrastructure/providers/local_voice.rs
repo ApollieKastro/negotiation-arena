@@ -21,12 +21,14 @@ use super::local::LocalModelManager;
 /// (загрузка весов) — 180 c покрывает 0.6B ASR на CPU/GPU.
 const INFER_TIMEOUT: Duration = Duration::from_secs(180);
 
-/// Python-интерпретатор для скриптов: `LOCAL_PYTHON` или `python3`.
+/// Python-интерпретатор для скриптов: `LOCAL_PYTHON` или `python3` (Linux/macOS) / `python` (Windows).
 fn python_bin() -> String {
     std::env::var("LOCAL_PYTHON")
         .ok()
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "python3".into())
+        .unwrap_or_else(|| {
+            if cfg!(windows) { "python".into() } else { "python3".into() }
+        })
 }
 
 /// Находит скрипт: env override → `scripts/<name>` от cwd → рядом с executable.

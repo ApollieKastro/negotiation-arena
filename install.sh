@@ -25,6 +25,17 @@ fi
 [ -n "${_NA_TMP:-}" ] && trap 'rm -f "$_NA_TMP"' EXIT
 
 set -euo pipefail
+# ── Windows / WSL detection ──────────────────────────────────────────────────
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || -n "${WSL_DISTRO_NAME:-}" ]]; then
+    echo "⚠ Windows detected. Use install.ps1 for native Windows installation:"
+    echo "   PowerShell: .\install.ps1"
+    echo "   Or run in WSL: wsl ./install.sh"
+    if [[ -n "${WSL_DISTRO_NAME:-}" ]]; then
+        echo "   (WSL detected: $WSL_DISTRO_NAME — continuing in Linux mode)"
+    else
+        exit 1
+    fi
+fi
 
 # ── Параметры (переопределяются переменными окружения) ─────────────────────
 REPO_URL="https://github.com/ApollieKastro/negotiation-arena.git"

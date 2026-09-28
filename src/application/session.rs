@@ -93,6 +93,27 @@ pub struct TurnOutcome {
     /// Оценка LLM-судьи (0..=10 по трём шкалам), `None` — судья не работал
     /// (выключен, сбой, квота) и баллы счищены на эвристике целиком.
     pub judge: Option<JudgeScores>,
+    /// Автоматическое завершение сессии по итогам реплики собеседника.
+    pub auto_finished: Option<AutoFinishInfo>,
+}
+
+/// Информация об автоматическом завершении сессии.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AutoFinishInfo {
+    /// Тип исхода диалога.
+    pub outcome: DialogueOutcome,
+    /// Сообщение для UI.
+    pub message: String,
+}
+
+/// Исход диалога, определённый по реплике собеседника.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DialogueOutcome {
+    /// Сделка заключена / соглашение достигнуто.
+    Agreement,
+    /// Переговоры разорваны / уход от сделки.
+    WalkAway,
 }
 
 /// Результат старта сессии: сессия + сценарий для карточек UI.
@@ -436,6 +457,29 @@ impl SessionService {
         branch.total_score = session.total_score;
         branch.turn_count = session.turn_count;
 
+        // 2.5) Авто-определение завершения по реплике собеседника.
+        let auto_finish = self.detect_dialogue_outcome(&partner_reply, &scenario);
+        if let Some(outcome) = auto_finish {
+            // Завершаем сессию автоматически.
+            let (finished_session, _report) = self.finish(&actor, &session.id)?;
+            return Ok(TurnOutcome {
+                session: finished_session,
+                partner_reply,
+                player_score_delta: score_delta,
+                strategy_slug: strategy.slug(),
+                spin_code: analysis.spin.map(|s| s.code()),
+                total_score,
+                judge: judge_scores,
+                auto_finished: Some(AutoFinishInfo {
+                    outcome,
+                    message: match outcome {
+                        DialogueOutcome::Agreement => "Собеседник подтвердил сделку — переговоры успешно завершены".to_string(),
+                        DialogueOutcome::WalkAway => "Собеседник отказался от сделки — переговоры прерваны".to_string(),
+                    },
+                }),
+            });
+        }
+
         let now = chrono::Utc::now().to_rfc3339();
         let player_msg = SessionMessage {
             id: uuid::Uuid::new_v4().to_string(),
@@ -474,6 +518,7 @@ impl SessionService {
             spin_code: analysis.spin.map(|s| s.code()),
             total_score, // накопленный счёт сессии (не дельта этого хода)
             judge: judge_scores,
+            auto_finished: None,
         })
     }
 
@@ -542,6 +587,7 @@ impl SessionService {
             total_score,
             // Без сети — только эвристика.
             judge: None,
+            auto_finished: None,
         })
     }
 
@@ -873,6 +919,63 @@ impl SessionService {
             tracing::warn!(error = %err, action, "не удалось записать аудит");
         }
     }
+
+
+
+    /// Определяет исход диалога по реплике собеседника.
+    /// Возвращает Some(DialogueOutcome) если обнаружен сигнал согласия или отказа.
+    fn detect_dialogue_outcome(&self, partner_reply: &str, _scenario: &Scenario) -> Option<DialogueOutcome> {
+        let text = partner_reply.to_lowercase();
+
+        // Согласие / сделка ЗАКЛЮЧЕНА (не обсуждается, а именно закрыта)
+        let agreement_patterns = [
+            "договорились",
+            "мы договорились",
+            "сделка заключена",
+            "сделка состоялась",
+            "подписываем контракт",
+            "подпишем контракт",
+            "контракт подписан",
+            "есть договорённость",
+            "agreed",
+            "we have a deal",
+            "deal done",
+            "deal closed",
+            "contract signed",
+            "signed the contract",
+        ];
+
+        // Отказ / уход от сделки (терминация, а не сложность)
+        let walkaway_patterns = [
+            "уходим",
+            "ухожу",
+            "нет сделки",
+            "сделки не будет",
+            "разрыв переговоров",
+            "прекращаю переговоры",
+            "walk away",
+            "no deal",
+            "deal off",
+            "отказываюсь от сделки",
+            "ничего не выйдет",
+            "бесполезно продолжать",
+        ];
+
+        for pattern in agreement_patterns {
+            if text.contains(pattern) {
+                return Some(DialogueOutcome::Agreement);
+            }
+        }
+
+        for pattern in walkaway_patterns {
+            if text.contains(pattern) {
+                return Some(DialogueOutcome::WalkAway);
+            }
+        }
+
+        None
+    }
+
 }
 
 /// System-prompt собеседника из сценария.
