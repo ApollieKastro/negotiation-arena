@@ -4,6 +4,26 @@
 
 Вы ведёте диалог с виртуальным партнёром по заданному сценарию (продажи, закупки, HR, партнёрство…), а в конце получаете скоринг, разбор по методикам (SPIN, гарвардский метод) и рекомендации. Генерацию речи собеседника обеспечивают внешние LLM-провайдеры, подключаемые через админку — без привязки к одному вендору.
 
+## 📑 Навигация
+
+- [Быстрый старт](#-быстрый-старт)
+- [Docker (рекомендуется)](#-вариант-1--docker)
+- [Linux / macOS (Rust + install.sh)](#-вариант-2--локально-rust)
+- [Windows (PowerShell + install.ps1)](#-windows-powershell)
+- [Конфигурация](#конфигурация)
+- [Голос (TTS/STT)](#голос-ttsstt)
+- [Архитектура](#архитектура)
+
+## 🚀 Быстрый старт
+
+| Платформа | Команда |
+|---|---|
+| **Docker** | `git clone ... && cd negotiation-arena && cp .env.example .env && docker compose up -d --build` |
+| **Linux / macOS** | `curl -fsSL https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/main/install.sh \| bash` |
+| **Windows (PowerShell)** | `iex (iwr https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/main/install.ps1).Content` |
+
+После установки откройте **http://localhost:3001/#/login** — логин `admin` / пароль `admin123`.
+
 ## Архитектура
 
 Модульный монолит на Rust (Axum) + SPA на vanilla-JS без сборщика:
@@ -48,9 +68,11 @@ docker run -d --name negotiation-arena \
 
 Образ собирается multi-stage (`rust:1-bookworm` → `debian:bookworm-slim`), работает под непривилегированным пользователем, healthcheck опрашивает `GET /health`. СPython-зависимостями голоса (см. ниже) размер образа ~1.1 ГБ.
 
-**Голос в Docker.** Образ уже содержит Python, `piper-tts`, `faster-whisper` и скрипты `scripts/local_*.py` — доустанавливать ничего не нужно. При первом старте entrypoint сидит русский Piper-голос в volume; в админке назначьте его на роль **TTS**: `Провайдеры → Local → Модели → piper/ru_RU-ruslan-medium.onnx → Назначения ролей → tts`. Без голоса в сборке: `docker compose build --build-arg PIPER_VOICE_DOWNLOAD=0`. Для STT скачайте, например, HF repo `Systran/faster-whisper-base` (админка → Локальные файлы) и назначьте на роль `stt`.
+### 🔊 Голос (TTS/STT) в Docker
 
-### Вариант 2 — локально (Rust)
+Образ уже содержит Python, `piper-tts`, `faster-whisper` и скрипты `scripts/local_*.py` — доустанавливать ничего не нужно. При первом старте entrypoint сидит русский Piper-голос в volume; в админке назначьте его на роль **TTS**: `Провайдеры → Local → Модели → piper/ru_RU-ruslan-medium.onnx → Назначения ролей → tts`. Без голоса в сборке: `docker compose build --build-arg PIPER_VOICE_DOWNLOAD=0`. Для STT скачайте, например, HF repo `Systran/faster-whisper-base` (админка → Локальные файлы) и назначьте на роль `stt`.
+
+### 🐧 Вариант 2 — локально (Linux / macOS / Rust)
 
 **Установка одним скриптом (рекомендуется):**
 
@@ -79,7 +101,7 @@ cargo run
 
 - **Полный сброс до чистого состояния:** удалите файлы `negotiation_arena.db*` — при следующем запуске БД создаётся заново с теми же сидами.
 
-### Windows (PowerShell)
+### 🪟 Windows (PowerShell)
 
 **Установка одним скриптом (рекомендуется):**
 
