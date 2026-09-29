@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          target: x86_64-pc-windows-msvc
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release
+        run: cargo build --release --locked
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: negotiation-arena-windows
+          path: target/release/negotiation-arena.exe
+          retention-days: 7
+
+  release:
+    name: Create Release
+    needs: build-windows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: negotiation-arena-windows
+          path: .
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Negotiation Arena ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          files: negotiation-arena.exe
+          draft: false
+          prerelease: false
+          generate_release_notes: true
