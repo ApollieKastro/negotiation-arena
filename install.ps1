@@ -182,6 +182,11 @@ function Cmd-Install {
     cd $REPO_DIR
     Run-Cmd { cargo build --release --quiet } "cargo build failed"
     Ok "Binary built: $REPO_DIR\target\release\negotiation-arena.exe"
+    # Голос (STT/TTS) — опционально: без Python/paketов приложение работает,
+    # но озвучивание и распознавание вернут 502. Скрипт сам всё чинит или
+    # мягко предупреждает, поэтому падать тут нельзя.
+    Info "Voice setup (piper + faster-whisper, optional)..."
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $REPO_DIR "scripts\setup-voice.ps1")
     Install-Files
     Ensure-Path
     Ensure-Alias

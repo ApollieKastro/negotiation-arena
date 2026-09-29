@@ -111,6 +111,8 @@ cargo run
 
 Откроется **http://localhost:3001/#/login** — логин `admin`, пароль `admin123`. Остановка: закрыть окно сервера. В архиве лежат сам `negotiation-arena.exe`, интерфейс `dist\` и презентация `docs\`; база SQLite создаётся рядом с exe (её достаточно удалить для полного сброса). Архив собирается скриптом [`scripts/package-windows.ps1`](scripts/package-windows.ps1) — им же формируется ассет релиза в CI.
 
+> **Голос (TTS/STT) в архиве** — опционально и требует Python: при первом запуске `START.bat` сам ставит пакеты (маркер `.voice-ready`), либо запустите `setup-voice.bat` вручную после установки Python. Без Python всё остальное работает, но голосовые кнопки ответят 502 «Внешний сервис недоступен».
+
 **Вариант 1 — установка из исходников (PowerShell):**
 
 ```powershell
@@ -136,7 +138,7 @@ iex ((New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.co
 
 После установки: ярлык поднимает сервер в фоне и открывает браузер на `http://localhost:3001/#/login` (повторный клик — только вкладка, второй экземпляр не поднимается). Остановка: `Stop-Process -Id (Get-Content $env:LOCALAPPDATA\negotiation-arena.pid)`, лог: `$env:LOCALAPPDATA\negotiation-arena.log`.
 
-Требуется [Rust](https://rustup.rs) stable (скрипт клонирует репозиторий и собирает release). Python нужен только для локального голоса (TTS/STT) — без него приложение работает полностью.
+Требуется [Rust](https://rustup.rs) stable (скрипт клонирует репозиторий и собирает release). Python нужен только для локального голоса (TTS/STT) — без него приложение работает полностью; установщик тут же запускает [`scripts/setup-voice.ps1`](scripts/setup-voice.ps1), который ставит `piper-tts` + `faster-whisper` (мягко, сбой не прерывает установку).
 
 **Вход в админку:** логин `admin`, пароль `admin123` (значение `ADMIN_PASSWORD`; задаётся только при первом запуске — сид создаёт пользователя один раз).
 
@@ -241,7 +243,8 @@ done
 (симптомы: «не найден .onnx голос», «не найдена модель»).
 
 1. Установите зависимости инференса: `pip install -r scripts/requirements-voice.txt`
-   (в Docker-образе уже установлены; внутри контейнера можно допакетировать:
+   (на Windows проще — `scripts/setup-voice.ps1` или `setup-voice.bat` из архива;
+   в Docker-образе уже установлены, внутри контейнера можно допакетировать:
    `docker exec -it negotiation-arena pip3 install <пакет>`).
    Для Nemotron ASR также нужен `nemo-speech` **или** HF-каталог с `config.json`.
 2. **Админка → Провайдеры → Локальные файлы** → укажите URL файла **или**

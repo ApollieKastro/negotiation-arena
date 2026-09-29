@@ -61,6 +61,9 @@ $bat = @(
     "rem снять отметку `"из интернета`" - иначе SmartScreen/антивирус может блокировать",
     "powershell -NoProfile -ExecutionPolicy Bypass -Command `"Get-ChildItem -File | Unblock-File -ErrorAction SilentlyContinue`" >nul 2>&1",
     "",
+    "rem голос (STT/TTS) требует Python + пакетов; без них всё остальное работает",
+    "if not exist `"%~dp0.voice-ready`" call :voice_check",
+    "",
     "curl -s -o nul http://localhost:3001/health >nul 2>&1",
     "if not errorlevel 1 goto open",
     "",
@@ -108,6 +111,22 @@ $bat = @(
     "echo.",
     "pause",
     "exit /b 1",
+    "",
+    ":voice_check",
+    "rem Голос (STT/TTS) - опционально: ставится один раз, дальше маркер .voice-ready.",
+    "rem Без Python/paketov всё остальное работает, поэтому ошибки здесь не фатальны.",
+    "where python >nul 2>&1",
+    "if errorlevel 1 (",
+    "  echo [ГОЛОС] Python не найден - озвучивание и распознавание речи отключены.",
+    "  echo         Остальное работает полностью. Нужен голос? Запустите setup-voice.bat",
+    "  echo         после установки Python - подробности в README-USTANOVKA.txt.",
+    "  echo .no-python> `"%~dp0.voice-ready`"",
+    "  goto :eof",
+    ")",
+    "echo [ГОЛОС] Первый запуск: ставлю пакеты для озвучивания и распознавания...",
+    "powershell -NoProfile -ExecutionPolicy Bypass -File `"%~dp0scripts\setup-voice.ps1`"",
+    "echo .done> `"%~dp0.voice-ready`"",
+    "goto :eof",
     ""
 ) -join "`r`n"
 [IO.File]::WriteAllText((Join-Path $stage "START.bat"), $bat, (New-Object Text.UTF8Encoding $false))
@@ -120,6 +139,7 @@ Negotiation Arena - установка на Windows (быстрая)
 ЧТО В АРХИВЕ
   negotiation-arena.exe   - сервер (Rust, Python и прочее ставить не нужно)
   START.bat               - запуск в один клик
+  setup-voice.bat         - включить голос: озвучивание и распознавание речи
   dist\                   - веб-интерфейс (обязателен, должен лежать рядом с exe)
   static\, docs\          - логотипы, favicon, презентация
   scripts\                - локальный голос (необязателен, нужен Python)
@@ -163,6 +183,20 @@ Negotiation Arena - установка на Windows (быстрая)
   ждёт готовности сервера до 30 секунд и в случае неудачи печатает
   причину (окно не закроется, пока вы не нажмёте клавишу).
 
+ГОЛОС (необязательно)
+  Озвучивание реплик (TTS) и распознавание вашей речи (STT) работают через
+  локальные модели: для них нужен Python 3.10+ и один раз запустить
+  setup-voice.bat (ставит piper-tts и faster-whisper, ~200 МБ, один раз).
+
+  Шаги:
+    1. Поставьте Python 3.10+ с python.org, галочка "Add python.exe to PATH".
+    2. Запустите setup-voice.bat из этой папки и дождитесь сообщения
+       "Voice ready".
+    3. Перезапустите сервер, если он уже работал.
+
+  Без Python всё остальное работает: диалог с моделью, сценарии, отчёты,
+  скоринг. Просто голосовые кнопки будут отвечать "Внешний сервис недоступен".
+
 ФАЙЛЫ ДАННЫХ
   База создаётся рядом с .exe (negotiation_arena.db) - распакуйте архив в папку
   с правом на запись (не в C:\Program Files).
@@ -171,6 +205,31 @@ Negotiation Arena - установка на Windows (быстрая)
 "@
 $utf8Bom = New-Object Text.UTF8Encoding $true
 [IO.File]::WriteAllText((Join-Path $stage "README-USTANOVKA.txt"), $readme, $utf8Bom)
+
+# --- voice setup (one-click, optional) --------------------------------------
+# UTF-8 без BOM + chcp 65001 на второй строке — как и у START.bat.
+$voiceBat = @(
+    "@echo off",
+    "chcp 65001 >nul 2>&1",
+    "setlocal",
+    "cd /d `"%~dp0`"",
+    "where python >nul 2>&1",
+    "if errorlevel 1 (",
+    "  echo Python не найден. Ставьте Python 3.10+ с https://python.org",
+    "  echo и обязательно ставьте галочку `"Add python.exe to PATH`".",
+    "  echo После этого запустите setup-voice.bat ещё раз.",
+    "  pause",
+    "  exit /b 1",
+    ")",
+    "powershell -NoProfile -ExecutionPolicy Bypass -File `"%~dp0scripts\setup-voice.ps1`"",
+    "if exist `"%~dp0.voice-ready`" del /q `"%~dp0.voice-ready`"",
+    "echo .done> `"%~dp0.voice-ready`"",
+    "echo.",
+    "pause",
+    "exit /b 0",
+    ""
+) -join "`r`n"
+[IO.File]::WriteAllText((Join-Path $stage "setup-voice.bat"), $voiceBat, (New-Object Text.UTF8Encoding $false))
 
 # --- архив -----------------------------------------------------------------
 $OutZip = [System.IO.Path]::GetFullPath($OutZip)

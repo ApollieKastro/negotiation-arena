@@ -65,6 +65,7 @@ ok()   { printf '%s✓%s %s\n' "$c_ok" "$c_off" "$*"; }
 warn() { printf '%s!%s %s\n' "$c_warn" "$c_off" "$*"; }
 err()  { printf '%s✗%s %s\n' "$c_err" "$c_off" "$*" >&2; }
 die()  { err "$*"; exit 1; }
+info() { printf '  %s\n' "$*"; }
 
 # Чтение ответа: stdin может быть piping (curl | bash) — тогда берём /dev/tty;
 # если и его нет (CI/пайп без терминала) — возвращаем отказ, вызывающий даёт дефолт.
@@ -186,6 +187,43 @@ validate_desktop() {
 }
 
 # ── 1. Установка ───────────────────────────────────────────────────────────
+# Голос (STT/TTS): Python + piper-tts + faster-whisper. Опционально — сбой
+# не прерывает установку, приложение без голоса работает полностью.
+voice_setup() {
+    if ! command -v python3 >/dev/null 2>&1; then
+        warn "нет python3 — голос (TTS/STT) выключен, остальное работает"
+        return 0
+    fi
+    local req="$REPO_DIR/scripts/requirements-voice.txt"
+    [ -f "$req" ] || return 0
+
+    # Ядро уже стоит? — выходим мгновенно.
+    if python3 -c "import piper, faster_whisper" >/dev/null 2>&1; then
+        ok "голос готов: piper (TTS) + faster-whisper (STT)"
+        return 0
+    fi
+
+    info "ставлю пакеты голоса (piper-tts, faster-whisper)…"
+    if ! python3 -m pip install --disable-pip-version-check --quiet \
+            --retries 5 --timeout 60 piper-tts faster-whisper soundfile; then
+        warn "пакеты голоса не встали (сеть?) — голос будет отвечать 502, остальное работает"
+        info "повтор: python3 -m pip install piper-tts faster-whisper soundfile"
+        return 0
+    fi
+
+    # Полный набор (torch для Nemotron ASR) — best-effort, большой.
+    python3 -m pip install --disable-pip-version-check --quiet \
+        --retries 5 --timeout 60 -r "$req" ||
+        warn "опциональные пакеты (torch) не встали — whisper/piper работают, Nemotron ASR нет"
+
+    if python3 -c "import piper, faster_whisper" >/dev/null 2>&1; then
+        ok "голос готов: piper (TTS) + faster-whisper (STT)"
+    else
+        warn "пакеты стоят, но импорт не прошёл — голос может не работать"
+    fi
+    return 0
+}
+
 cmd_install() {
     need_cmd git
     need_cmd curl
@@ -208,6 +246,10 @@ cmd_install() {
     ok "сборка release (первый раз — до пары минут)…"
     (cd "$REPO_DIR" && cargo build --release --quiet)
     ok "бинарник собран: $REPO_DIR/target/release/negotiation-arena"
+
+    # Голос (STT/TTS) — опционально: без Python/paketов приложение работает,
+    # но озвучивание и распознавание вернут 502. Сбой здесь не фатален.
+    voice_setup
 
     install_files
     ensure_alias

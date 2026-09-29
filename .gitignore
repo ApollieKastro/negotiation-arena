@@ -45,3 +45,6 @@ Thumbs.db
 *.log
 stderr.txt
 stdout.txt
+
+# маркер однократной установки голоса (START.bat / setup-voice.bat)
+.voice-ready
