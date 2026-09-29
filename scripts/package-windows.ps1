@@ -46,20 +46,71 @@ if (-not (Test-Path (Join-Path $stage "dist\index.html"))) {
 }
 
 # --- лаунчер ---------------------------------------------------------------
-# Только ASCII: cmd читает .bat в текущей кодовой странице консоли.
+# UTF-8 без BOM + `chcp 65001` на второй строке: cmd читает файл в кодовой
+# странице консоли, поэтому первая строка — чисто ASCII, а после смены
+# кодовой страницы кириллические сообщения читаются корректно.
 $bat = @(
     "@echo off",
+    "chcp 65001 >nul 2>&1",
+    "setlocal",
     "cd /d `"%~dp0`"",
+    "",
+    "if not exist `"%~dp0negotiation-arena.exe`" goto no_exe",
+    "if not exist `"%~dp0dist\index.html`" echo [ВНИМАНИЕ] Не найдена папка dist - интерфейс не откроется. Распакуйте архив полностью.",
+    "",
+    "rem снять отметку `"из интернета`" - иначе SmartScreen/антивирус может блокировать",
+    "powershell -NoProfile -ExecutionPolicy Bypass -Command `"Get-ChildItem -File | Unblock-File -ErrorAction SilentlyContinue`" >nul 2>&1",
+    "",
     "curl -s -o nul http://localhost:3001/health >nul 2>&1",
-    "if errorlevel 1 (",
-    "  echo Starting Negotiation Arena...",
-    "  start `"Negotiation Arena`" cmd /k `"`"%~dp0negotiation-arena.exe`"`"",
-    "  timeout /t 3 /nobreak >nul",
-    ")",
+    "if not errorlevel 1 goto open",
+    "",
+    "echo Запускаю сервер - откроется отдельное окно с логами (не закрывайте его)...",
+    "start `"Negotiation Arena - сервер`" cmd /k `"`"%~dp0negotiation-arena.exe`"`"",
+    "set tries=0",
+    ":wait",
+    "ping -n 2 127.0.0.1 >nul 2>&1",
+    "set /a tries+=1",
+    "curl -s -o nul http://localhost:3001/health >nul 2>&1",
+    "if not errorlevel 1 goto ready",
+    "if %tries% lss 15 goto wait",
+    "goto failed",
+    "",
+    ":ready",
+    "echo Готово! Страница: http://localhost:3001   Логин: admin   Пароль: admin123",
+    ":open",
     "start `"`" http://localhost:3001/#/login",
+    "exit /b 0",
+    "",
+    ":no_exe",
+    "echo.",
+    "echo [ОШИБКА] negotiation-arena.exe не найден рядом с START.bat.",
+    "echo.",
+    "echo Скорее всего архив распакован не полностью, или START.bat запущен",
+    "echo прямо из окна архива. Сделайте так:",
+    "echo   1. Откройте zip в Проводнике.",
+    "echo   2. Нажмите `"Извлечь все`" (выделить ВСЁ содержимое).",
+    "echo   3. Зайдите в извлечённую папку и запустите START.bat оттуда.",
+    "echo.",
+    "echo Если Windows пишет, что файл заблокирован (из интернета):",
+    "echo   ПКМ по negotiation-arena.exe - Свойства - галочка `"Разблокировать`" - OK.",
+    "echo.",
+    "pause",
+    "exit /b 1",
+    "",
+    ":failed",
+    "echo.",
+    "echo [ОШИБКА] Сервер не поднялся за 30 секунд.",
+    "echo Загляните в окно сервера - там будет текст ошибки.",
+    "echo Частые причины:",
+    "echo   - SmartScreen/антивирус заблокировал negotiation-arena.exe;",
+    "echo   - порт 3001 занят (тогда: set PORT=3002 и запустите exe вручную);",
+    "echo   - нет прав на запись в папку (база создается рядом с exe - не ставьте в Program Files).",
+    "echo.",
+    "pause",
+    "exit /b 1",
     ""
 ) -join "`r`n"
-[IO.File]::WriteAllText((Join-Path $stage "START.bat"), $bat, (New-Object Text.ASCIIEncoding))
+[IO.File]::WriteAllText((Join-Path $stage "START.bat"), $bat, (New-Object Text.UTF8Encoding $false))
 
 # --- инструкция (UTF-8 с BOM — корректно открывается в Блокноте) ----------
 $readme = @"
@@ -76,6 +127,10 @@ Negotiation Arena - установка на Windows (быстрая)
 УСТАНОВКА (2 шага)
   1. Распакуйте архив в любую папку (например C:\NegotiationArena)
   2. Запустите START.bat
+
+  ВАЖНО: не запускайте START.bat из окна архива! Сначала нажмите в
+  Проводнике "Извлечь все", зайдите в извлечённую папку и запускайте
+  оттуда - иначе рядом с батником не будет negotiation-arena.exe.
 
   Откроется http://localhost:3001/#/login
   Логин:   admin
@@ -94,10 +149,19 @@ Negotiation Arena - установка на Windows (быстрая)
   Модели (OpenAI/Groq/Ollama) подключаются в админке: Провайдеры.
   Без моделей работает демо-собеседник (офлайн) - базовый режим.
 
-ЕСЛИ ЧТО-ТО НЕ РАБОТАЕТ
-  Откройте PowerShell, перейдите в папку и выполните:
-      .\negotiation-arena.exe
-  Текст ошибки будет виден сразу.
+ЕСЛИ START.bat ЗАКРЫВАЕТСЯ ИЛИ НИЧЕГО НЕ ПРОИСХОДИТ
+  1. Архив не распакован - запуск идёт из окна zip (см. ВАЖНО выше).
+     Сам лаунчер теперь сам пишет причину и ждёт нажатия клавиши.
+  2. SmartScreen / антивирус: ПКМ по negotiation-arena.exe - Свойства -
+     поставить галочку "Разблокировать" - OK. Лаунчер снимает эту
+     отметку автоматически при каждом запуске.
+  3. Откройте PowerShell, перейдите в папку и выполните:
+         .\negotiation-arena.exe
+     Текст ошибки будет виден сразу.
+
+  START.bat сам: проверяет наличие exe, снимает блокировку "из интернета",
+  ждёт готовности сервера до 30 секунд и в случае неудачи печатает
+  причину (окно не закроется, пока вы не нажмёте клавишу).
 
 ФАЙЛЫ ДАННЫХ
   База создаётся рядом с .exe (negotiation_arena.db) - распакуйте архив в папку
