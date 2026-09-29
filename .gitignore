@@ -21,6 +21,9 @@ __pycache__/
 # NB: dist/ — исходники SPA (index.html, css, js), которые Axum отдаёт как есть.
 # Это НЕ build-output: собранных артефактов нет, поэтому dist/ версионируется.
 
+# Windows release package (scripts/package-windows.ps1 output)
+/negotiation-arena-windows-x64.zip
+
 # Database
 *.db
 *.db-journal

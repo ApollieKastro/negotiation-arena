@@ -9,7 +9,7 @@
 - [Быстрый старт](#-быстрый-старт)
 - [Docker (рекомендуется)](#-вариант-1--docker)
 - [Linux / macOS (Rust + install.sh)](#-вариант-2--локально-rust)
-- [Windows (PowerShell + install.ps1)](#-windows-powershell)
+- [Windows (.exe / PowerShell)](#-windows)
 - [Конфигурация](#конфигурация)
 - [Голос (TTS/STT)](#голос-ttsstt)
 - [Архитектура](#архитектура)
@@ -20,7 +20,8 @@
 |---|---|
 | **Docker** | `git clone ... && cd negotiation-arena && cp .env.example .env && docker compose up -d --build` |
 | **Linux / macOS** | `curl -fsSL https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/main/install.sh \| bash` |
-| **Windows (PowerShell)** | `iex (irm https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/main/install.ps1)` |
+| **Windows (.exe, без установки)** | [Скачать архив](https://github.com/ApollieKastro/negotiation-arena/releases/latest/download/negotiation-arena-windows-x64.zip) → распаковать → `START.bat` |
+| **Windows (PowerShell, из исходников)** | `iex (irm https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/main/install.ps1)` |
 
 После установки откройте **http://localhost:3001/#/login** — логин `admin` / пароль `admin123`.
 
@@ -101,18 +102,25 @@ cargo run
 
 - **Полный сброс до чистого состояния:** удалите файлы `negotiation_arena.db*` — при следующем запуске БД создаётся заново с теми же сидами.
 
-### 🪟 Windows (PowerShell)
+### 🪟 Windows
 
-**Установка одним скриптом (рекомендуется):**
+**Вариант 0 — готовый архив с .exe (быстрее всего, Rust/Python/git не нужны):**
+
+1. Скачайте [`negotiation-arena-windows-x64.zip`](https://github.com/ApollieKastro/negotiation-arena/releases/latest/download/negotiation-arena-windows-x64.zip) со [страницы Releases](https://github.com/ApollieKastro/negotiation-arena/releases/latest).
+2. Распакуйте в любую папку (например `C:\NegotiationArena`) и запустите **`START.bat`**.
+
+Откроется **http://localhost:3001/#/login** — логин `admin`, пароль `admin123`. Остановка: закрыть окно сервера. В архиве лежат сам `negotiation-arena.exe`, интерфейс `dist\` и презентация `docs\`; база SQLite создаётся рядом с exe (её достаточно удалить для полного сброса). Архив собирается скриптом [`scripts/package-windows.ps1`](scripts/package-windows.ps1) — им же формируется ассет релиза в CI.
+
+**Вариант 1 — установка из исходников (PowerShell):**
 
 ```powershell
-# Вариант 1: из PowerShell (pwsh 7+ или Windows PowerShell 5.1)
+# из PowerShell (pwsh 7+ или Windows PowerShell 5.1)
 iex (irm https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/main/install.ps1)
 # → откроется интерактивное меню: 1) Установить / 2) Обновить / 3) Удалить
 ```
 
 ```powershell
-# Вариант 2: из клонированного репозитория
+# из клонированного репозитория
 .\install.ps1            # интерактивное меню
 .\install.ps1 install    # установить
 .\install.ps1 update     # обновить (git pull + пересборка)
@@ -123,7 +131,7 @@ iex (irm https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/main/
 
 После установки: ярлык поднимает сервер в фоне и открывает браузер на `http://localhost:3001/#/login` (повторный клик — только вкладка, второй экземпляр не поднимается). Остановка: `Stop-Process -Id (Get-Content $env:LOCALAPPDATA\negotiation-arena.pid)`, лог: `$env:LOCALAPPDATA\negotiation-arena.log`.
 
-Требуется [Rust](https://rustup.rs) stable и Python (для голоса/STT).
+Требуется [Rust](https://rustup.rs) stable (скрипт клонирует репозиторий и собирает release). Python нужен только для локального голоса (TTS/STT) — без него приложение работает полностью.
 
 **Вход в админку:** логин `admin`, пароль `admin123` (значение `ADMIN_PASSWORD`; задаётся только при первом запуске — сид создаёт пользователя один раз).
 
