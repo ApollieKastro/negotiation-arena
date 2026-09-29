@@ -18,7 +18,7 @@
 
 | Платформа | Команда |
 |---|---|
-| **Docker** | `git clone ... && cd negotiation-arena && cp .env.example .env && docker compose up -d --build` |
+| **Docker** | `git clone https://github.com/ApollieKastro/negotiation-arena.git && cd negotiation-arena && cp .env.example .env && docker compose up -d --build ` |
 | **Linux / macOS** | `curl -fsSL https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/main/install.sh \| bash` |
 | **Windows (.exe, без установки)** | [Скачать архив](https://github.com/ApollieKastro/negotiation-arena/releases/latest/download/negotiation-arena-windows-x64.zip) → распаковать → `START.bat` |
 | **Windows (PowerShell, из исходников)** | `iex ((New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/main/install.ps1') -replace '^\uFEFF','')` |
@@ -131,16 +131,20 @@ iex ((New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.co
 .\install.ps1 update     # обновить (git pull + пересборка)
 .\install.ps1 uninstall  # удалить
 ```
+В директории проекта прописать команду
+```powershell
+cargo run
+```
 
 Установщик клонирует репозиторий, собирает release, создаёт ярлык «Negotiation Arena» в меню Пуске и на рабочем столе, добавляет команды `negotiation-arena` / `arena` в PATH и алиас `arena` в PowerShell профиль. Повторный запуск идемпотентен.
 
 > **Почему не `iex (irm …)`?** `Invoke-RestMethod` отдаёт содержимое файла с BOM-символом (`U+FEFF`), и `Invoke-Expression` воспринимает `<#` уже не как начало комментария, а как имя команды — ошибка «`Имя "﻿<#" не распознано`», строки комментария сыпятся как команды. Вдобавок в Windows PowerShell 5.1 `irm` может вывести предупреждение про `-UseBasicParsing` с ответом по умолчанию «Н» — и тогда установка молча не запустится. Команда выше идёт через `WebClient`: BOM снимается автоматически (плюс страховочный `-replace`) и предупреждение не появляется.
 
-После установки: ярлык поднимает сервер в фоне и открывает браузер на `http://localhost:3001/#/login` (повторный клик — только вкладка, второй экземпляр не поднимается). Остановка: `Stop-Process -Id (Get-Content $env:LOCALAPPDATA\negotiation-arena.pid)`, лог: `$env:LOCALAPPDATA\negotiation-arena.log`.
+После установки: ярлык поднимает сервер в фоне и показывает ссылку  на `http://localhost:3001/#/login` (повторный клик — только вкладка, второй экземпляр не поднимается). Остановка: `Stop-Process -Id (Get-Content $env:LOCALAPPDATA\negotiation-arena.pid)`, лог: `$env:LOCALAPPDATA\negotiation-arena.log`.
 
 Требуется [Rust](https://rustup.rs) stable (скрипт клонирует репозиторий и собирает release). Python нужен только для локального голоса (TTS/STT) — без него приложение работает полностью; установщик тут же запускает [`scripts/setup-voice.ps1`](scripts/setup-voice.ps1), который ставит `piper-tts` + `faster-whisper` (мягко, сбой не прерывает установку).
 
-**Вход в админку:** логин `admin`, пароль `admin123` (значение `ADMIN_PASSWORD`; задаётся только при первом запуске — сид создаёт пользователя один раз).
+**Вход в админку:** логин `admin`, пароль `admin123` (значение `ADMIN_PASSWORD`; можно поменять в настройках).
 
 Конфигурация (оба варианта) — переменные окружения: compose подхватывает `.env` автоматически, список переменных см. в [Конфигурация](#конфигурация) и [`.env.example`](.env.example).
 
