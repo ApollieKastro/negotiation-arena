@@ -21,7 +21,7 @@
 | **Docker** | `git clone ... && cd negotiation-arena && cp .env.example .env && docker compose up -d --build` |
 | **Linux / macOS** | `curl -fsSL https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/main/install.sh \| bash` |
 | **Windows (.exe, без установки)** | [Скачать архив](https://github.com/ApollieKastro/negotiation-arena/releases/latest/download/negotiation-arena-windows-x64.zip) → распаковать → `START.bat` |
-| **Windows (PowerShell, из исходников)** | `iex (irm https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/main/install.ps1)` |
+| **Windows (PowerShell, из исходников)** | `iex ((New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/main/install.ps1') -replace '^\uFEFF','')` |
 
 После установки откройте **http://localhost:3001/#/login** — логин `admin` / пароль `admin123`.
 
@@ -115,7 +115,10 @@ cargo run
 
 ```powershell
 # из PowerShell (pwsh 7+ или Windows PowerShell 5.1)
-iex (irm https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/main/install.ps1)
+# WebClient, а не irm: Invoke-RestMethod возвращает строку с BOM (U+FEFF),
+# из-за чего Invoke-Expression падает с «имя "<#" не распознано», а в 5.1
+# irm ещё и выводит предупреждение про -UseBasicParsing (по умолчанию «Н»).
+iex ((New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/main/install.ps1') -replace '^\uFEFF','')
 # → откроется интерактивное меню: 1) Установить / 2) Обновить / 3) Удалить
 ```
 
@@ -128,6 +131,8 @@ iex (irm https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/main/
 ```
 
 Установщик клонирует репозиторий, собирает release, создаёт ярлык «Negotiation Arena» в меню Пуске и на рабочем столе, добавляет команды `negotiation-arena` / `arena` в PATH и алиас `arena` в PowerShell профиль. Повторный запуск идемпотентен.
+
+> **Почему не `iex (irm …)`?** `Invoke-RestMethod` отдаёт содержимое файла с BOM-символом (`U+FEFF`), и `Invoke-Expression` воспринимает `<#` уже не как начало комментария, а как имя команды — ошибка «`Имя "﻿<#" не распознано`», строки комментария сыпятся как команды. Вдобавок в Windows PowerShell 5.1 `irm` может вывести предупреждение про `-UseBasicParsing` с ответом по умолчанию «Н» — и тогда установка молча не запустится. Команда выше идёт через `WebClient`: BOM снимается автоматически (плюс страховочный `-replace`) и предупреждение не появляется.
 
 После установки: ярлык поднимает сервер в фоне и открывает браузер на `http://localhost:3001/#/login` (повторный клик — только вкладка, второй экземпляр не поднимается). Остановка: `Stop-Process -Id (Get-Content $env:LOCALAPPDATA\negotiation-arena.pid)`, лог: `$env:LOCALAPPDATA\negotiation-arena.log`.
 

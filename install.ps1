@@ -7,7 +7,7 @@
     Creates Start Menu shortcut, Desktop shortcut, adds to PATH, creates 'arena' alias.
 
 .USAGE
-    iex (iwr https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/main/install.ps1).Content
+    iex ((New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/main/install.ps1') -replace '^\uFEFF','')
     .\install.ps1 install
     .\install.ps1 update
     .\install.ps1 uninstall
@@ -252,7 +252,7 @@ function Show-Menu {
     Write-Host "  0) Exit"
 }
 
-# Support both: .\install.ps1  |  .\install.ps1 install  |  iex (irm ...).Content
+# Support both: .\install.ps1  |  .\install.ps1 install  |  iex (WebClient ...)
 $cmd = if ($args.Count -gt 0) { $args[0] } else { "" }
 
 switch ($cmd) {
