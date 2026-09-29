@@ -131,7 +131,9 @@ IconIndex=0
 }
 
 function Ensure-Path {
-    $userPath = [Environment]::GetEnvironmentVariable("Path", "User") ?? ""
+    # Прим.: оператор `??` в PS 7, здесь — совместимо с Windows PowerShell 5.1
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if (-not $userPath) { $userPath = "" }
     if ($userPath -notlike "*$BIN_DIR*") {
         [Environment]::SetEnvironmentVariable("Path", "$userPath;$BIN_DIR", "User")
         Warn "Added $BIN_DIR to User PATH. Restart terminal."
@@ -154,9 +156,14 @@ Set-Alias -Name arena -Value negotiation-arena
 function Check-Prereqs {
     Need-Cmd "git"
     Need-Cmd "curl"
-    Need-Cmd "cargo" "Install Rust: https://rustup.rs"
-    Need-Cmd "python" "Install Python from python.org or Microsoft Store"
-    Ok "Prerequisites OK"
+    Need-Cmd "cargo" "Install Rust from https://rustup.rs (needed to build from source)"
+    # Python нужен только для локального озвучивания/распознавания (scripts/*.py):
+    # без него всё остальное работает, поэтому это предупреждение, а не ошибка.
+    if (Get-Command "python" -ErrorAction SilentlyContinue) {
+        Ok "Prerequisites OK"
+    } else {
+        Warn "Python not found - voice (STT/TTS) unavailable. Core app works fine."
+    }
 }
 
 # ─── Commands ───────────────────────────────────────────────────────────
@@ -213,7 +220,8 @@ function Cmd-Uninstall {
     Remove-Item (Join-Path $DESKTOP "Negotiation Arena.url") -Force -ErrorAction SilentlyContinue
     Ok "Removed shortcuts, commands, logs"
 
-    $userPath = [Environment]::GetEnvironmentVariable("Path", "User") ?? ""
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if (-not $userPath) { $userPath = "" }
     if ($userPath -like "*$BIN_DIR*") {
         $newPath = ($userPath -split ';' | Where-Object { $_ -ne $BIN_DIR }) -join ';'
         [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
