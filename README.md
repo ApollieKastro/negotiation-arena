@@ -64,7 +64,7 @@ curl -fsSL https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/mai
 ярлык приложения «Negotiation Arena», команды `arena` / `negotiation-arena`
 в `~/.local/bin` и алиас `arena` в `.zshrc`. Повторный запуск идемпотентен.
 
-После установки: ярлык поднимает сервер в фоне и открывает браузер (повторный
+После установки: ярлык поднимает сервер в фоне и открывает браузер на `http://localhost:3001/#/login` (повторный
 клик — только вкладка, второй экземпляр не поднимается). Остановка:
 `kill "$(cat ~/.cache/negotiation-arena.pid)"`, лог: `~/.cache/negotiation-arena.log`.
 
@@ -75,7 +75,7 @@ cp .env.example .env   # при желании поправьте значени
 cargo run
 ```
 
-Сервер поднимется на **http://localhost:3001** (портом управляет `PORT`).
+Сервер поднимётся на **http://localhost:3001/#/login** (портом управляет `PORT`).
 
 - **Полный сброс до чистого состояния:** удалите файлы `negotiation_arena.db*` — при следующем запуске БД создаётся заново с теми же сидами.
 
@@ -102,8 +102,6 @@ iex (iwr https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/main/
 После установки: ярлык поднимает сервер в фоне и открывает браузер на `http://localhost:3001/#/login` (повторный клик — только вкладка, второй экземпляр не поднимается). Остановка: `Stop-Process -Id (Get-Content $env:LOCALAPPDATA\negotiation-arena.pid)`, лог: `$env:LOCALAPPDATA\negotiation-arena.log`.
 
 Требуется [Rust](https://rustup.rs) stable и Python (для голоса/STT).
-
-**Вход в админку:** логин `admin`, пароль `admin123` (значение `ADMIN_PASSWORD`; задаётся только при первом запуске).
 
 **Вход в админку:** логин `admin`, пароль `admin123` (значение `ADMIN_PASSWORD`; задаётся только при первом запуске — сид создаёт пользователя один раз).
 

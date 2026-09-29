@@ -191,7 +191,7 @@
 1. git clone <репозиторий> && cp .env.example .env && cargo run
           или docker compose up -d — без ручной настройки
 
-2. Открыть http://localhost:3001 → войти admin / admin123
+2. Открыть http://localhost:3001/#/login → войти admin / admin123
           демо работает офлайн: встроенный mock-LLM отвечает без ключей
 
 3. Админка → Сценарии → ✨
