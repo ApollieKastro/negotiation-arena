@@ -1,4 +1,4 @@
-<# 
+﻿<# 
 .SYNOPSIS
     Negotiation Arena Windows Installer - Install / Update / Uninstall
 
@@ -16,10 +16,14 @@
 # Self-execution protection (like install.sh)
 $origPath = $MyInvocation.MyCommand.Path
 if ($origPath -and (Test-Path $origPath) -and -not $env:NA_REEXEC) {
-    $tmp = [IO.Path]::GetTempFileName()
+    $tmpDir = [IO.Path]::GetTempPath()
+    $tmpName = "na-install-" + [guid]::NewGuid().ToString() + ".ps1"
+    $tmp = Join-Path $tmpDir $tmpName
     Copy-Item $origPath $tmp -Force
     $env:NA_REEXEC = "1"
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $tmp @args
+    # Use the SAME host executable (pwsh vs powershell) to avoid 5.1 parse errors
+    $hostExe = (Get-Process -Id $PID).Path
+    & $hostExe -NoProfile -ExecutionPolicy Bypass -File $tmp @args
     Remove-Item $tmp -ErrorAction SilentlyContinue
     exit
 }
@@ -30,17 +34,19 @@ $ErrorActionPreference = "Stop"
 # Configuration
 $REPO_URL      = "https://github.com/ApollieKastro/negotiation-arena.git"
 $BRANCH        = "main"
-$REPO_DIR      = $env:NEGOTIATION_ARENA_HOME ?? "$env:USERPROFILE\App\negotiation-arena"
-$BIN_DIR       = $env:NA_BIN_DIR ?? "$env:USERPROFILE\.local\bin"
-$DATA_DIR      = $env:APPDATA
-$START_MENU    = Join-Path $DATA_DIR "Microsoft\Windows\Start Menu\Programs\Negotiation Arena"
-$DESKTOP       = [Environment]::GetFolderPath("Desktop")
-$CACHE_DIR     = $env:LOCALAPPDATA ?? "$env:USERPROFILE\AppData\Local"
-$PID_FILE      = Join-Path $CACHE_DIR "negotiation-arena.pid"
-$LOG_FILE      = Join-Path $CACHE_DIR "negotiation-arena.log"
-$WRAPPER       = Join-Path $BIN_DIR "negotiation-arena.bat"
-$LAUNCHER      = Join-Path $BIN_DIR "arena-launch.bat"
-$PS_PROFILE    = $PROFILE.CurrentUserAllHosts
+
+# PS 5.1 compatible null-coalescing (?? is PS 7+ only)
+$REPO_DIR = if ($null -eq $env:NEGOTIATION_ARENA_HOME) { "$env:USERPROFILE\App\negotiation-arena" } else { $env:NEGOTIATION_ARENA_HOME }
+$BIN_DIR  = if ($null -eq $env:NA_BIN_DIR) { "$env:USERPROFILE\.local\bin" } else { $env:NA_BIN_DIR }
+$DATA_DIR = $env:APPDATA
+$START_MENU = Join-Path $DATA_DIR "Microsoft\Windows\Start Menu\Programs\Negotiation Arena"
+$DESKTOP = [Environment]::GetFolderPath("Desktop")
+$CACHE_DIR = if ($null -eq $env:LOCALAPPDATA) { "$env:USERPROFILE\AppData\Local" } else { $env:LOCALAPPDATA }
+$PID_FILE  = Join-Path $CACHE_DIR "negotiation-arena.pid"
+$LOG_FILE  = Join-Path $CACHE_DIR "negotiation-arena.log"
+$WRAPPER   = Join-Path $BIN_DIR "negotiation-arena.bat"
+$LAUNCHER  = Join-Path $BIN_DIR "arena-launch.bat"
+$PS_PROFILE = $PROFILE.CurrentUserAllHosts
 
 # Colors
 $c_ok   = "Green"
@@ -64,11 +70,11 @@ function Need-Cmd($name, $hint = "") {
 # Stop background server
 function Stop-Server {
     if (Test-Path $PID_FILE) {
-        $pid = Get-Content $PID_FILE -ErrorAction SilentlyContinue
-        if ($pid -and (Get-Process -Id $pid -ErrorAction SilentlyContinue)) {
-            Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+        $pidContent = Get-Content $PID_FILE -ErrorAction SilentlyContinue
+        if ($pidContent -and (Get-Process -Id $pidContent -ErrorAction SilentlyContinue)) {
+            Stop-Process -Id $pidContent -Force -ErrorAction SilentlyContinue
             Start-Sleep 1
-            Write-Ok "Server stopped (pid $pid)"
+            Write-Ok "Server stopped (pid $pidContent)"
         }
         Remove-Item $PID_FILE -Force -ErrorAction SilentlyContinue
     }
@@ -96,7 +102,7 @@ if not exist "%BIN%" (
     @"
 @echo off
 set HEALTH_URL=http://localhost:3001/health
-set APP_URL=http://localhost:3001
+set APP_URL=http://localhost:3001/#/login
 set WRAPPER=$WRAPPER
 set LOG_FILE=$LOG_FILE
 set PID_FILE=$PID_FILE
@@ -146,6 +152,7 @@ IconIndex=0
 # Add to PATH (user scope)
 function Ensure-Path {
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if ($null -eq $userPath) { $userPath = "" }
     if ($userPath -notlike "*$BIN_DIR*") {
         [Environment]::SetEnvironmentVariable("Path", "$userPath;$BIN_DIR", "User")
         Write-Warn "Added $BIN_DIR to User PATH. Restart terminal."
@@ -180,27 +187,32 @@ function Check-Prereqs {
     Write-Ok "Prerequisites OK"
 }
 
+# Execute native command with proper error handling (works in PS 5.1+)
+function Invoke-Native {
+    param([scriptblock]$ScriptBlock, [string]$ErrorMsg)
+    & $ScriptBlock
+    if ($LASTEXITCODE -ne 0) {
+        throw "$ErrorMsg (exit code $LASTEXITCODE)"
+    }
+}
+
 # 1. Install
 function Cmd-Install {
     Check-Prereqs
 
     if (Test-Path "$REPO_DIR\.git") {
         Write-Ok "Repository exists: $REPO_DIR"
-        try {
-            git -C $REPO_DIR pull --ff-only --quiet
-            Write-Ok "Code updated to $BRANCH"
-        } catch {
-            Write-Warn "Fast-forward failed (local changes?) - building as-is"
-        }
+        Invoke-Native { git -C $REPO_DIR pull --ff-only --quiet } "git pull failed"
+        Write-Ok "Code updated to $BRANCH"
     } else {
         Write-Info "Cloning $REPO_URL (branch $BRANCH) -> $REPO_DIR"
         New-Item -ItemType Directory -Force -Path (Split-Path $REPO_DIR) | Out-Null
-        git clone --branch $BRANCH $REPO_URL $REPO_DIR
+        Invoke-Native { git clone --branch $BRANCH $REPO_URL $REPO_DIR } "git clone failed"
     }
 
     Write-Info "Building release (first time takes a few minutes)..."
     cd $REPO_DIR
-    cargo build --release --quiet
+    Invoke-Native { cargo build --release --quiet } "cargo build failed"
     Write-Ok "Binary built: $REPO_DIR\target\release\negotiation-arena.exe"
 
     Install-Files
@@ -224,11 +236,7 @@ function Cmd-Update {
     Stop-Server
 
     $old = git -C $REPO_DIR rev-parse HEAD
-    try {
-        git -C $REPO_DIR pull --ff-only --quiet
-    } catch {
-        throw "git pull failed - local changes in $REPO_DIR (git status)"
-    }
+    Invoke-Native { git -C $REPO_DIR pull --ff-only --quiet } "git pull failed - local changes in $REPO_DIR (git status)"
     $new = git -C $REPO_DIR rev-parse HEAD
 
     if ($old -eq $new) {
@@ -241,7 +249,7 @@ function Cmd-Update {
 
     Write-Info "Rebuilding release..."
     cd $REPO_DIR
-    cargo build --release --quiet
+    Invoke-Native { cargo build --release --quiet } "cargo build failed"
     Write-Ok "Binary rebuilt"
 
     Install-Files
@@ -258,7 +266,7 @@ function Cmd-Uninstall {
 
     # Remove from PATH
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    if ($userPath -like "*$BIN_DIR*") {
+    if ($null -ne $userPath -and $userPath -like "*$BIN_DIR*") {
         $newPath = ($userPath -split ';' | Where-Object { $_ -ne $BIN_DIR }) -join ';'
         [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
         Write-Ok "Removed $BIN_DIR from User PATH (restart terminal)"
@@ -275,7 +283,7 @@ function Cmd-Uninstall {
     }
 
     Write-Host ""
-    $confirm = Read-Host "Also delete project folder $REPO_DIR (DB, history, models)? [y/N]"
+    $confirm = Read-Input "Also delete project folder $REPO_DIR (DB, history, models)? [y/N]"
     if ($confirm -match '^[yYдД]') {
         if (Test-Path "$REPO_DIR\.git" -and (git -C $REPO_DIR remote get-url origin 2>$null | Select-String "negotiation-arena")) {
             Remove-Item $REPO_DIR -Recurse -Force
@@ -290,6 +298,23 @@ function Cmd-Uninstall {
     Write-Ok "Uninstall complete. Rust/Python not touched."
 }
 
+# Read input with fallback for non-interactive stdin (like install.sh's ask())
+function Read-Input {
+    param([string]$Prompt = "")
+    if ([Console]::IsInputRedirected) {
+        Write-Warn "Non-interactive stdin detected. Run from terminal or use command-line args:"
+        Write-Info "  .\install.ps1 install"
+        Write-Info "  .\install.ps1 update"
+        Write-Info "  .\install.ps1 uninstall"
+        return $null
+    }
+    try {
+        return Read-Host $Prompt
+    } catch {
+        return $null
+    }
+}
+
 # Menu
 function Show-Menu {
     Write-Host "`nNegotiation Arena Installer (branch $BRANCH)" -ForegroundColor Cyan
@@ -297,11 +322,10 @@ function Show-Menu {
     Write-Host "  2) Update (from GitHub)"
     Write-Host "  3) Uninstall"
     Write-Host "  0) Exit"
-    Write-Host "Choice: " -NoNewline
 }
 
 # Main
-$cmd = $args[0] ?? ""
+$cmd = if ($args.Count -gt 0) { $args[0] } else { "" }
 switch ($cmd) {
     "install"   { Cmd-Install;   break }
     "update"    { Cmd-Update;    break }
@@ -309,7 +333,8 @@ switch ($cmd) {
     ""          {
         while ($true) {
             Show-Menu
-            $choice = Read-Host
+            $choice = Read-Input "Choice"
+            if ($null -eq $choice) { break }  # EOF or non-interactive
             switch ($choice) {
                 "1" { Cmd-Install;   break }
                 "2" { Cmd-Update;    break }

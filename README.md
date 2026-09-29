@@ -79,6 +79,32 @@ cargo run
 
 - **Полный сброс до чистого состояния:** удалите файлы `negotiation_arena.db*` — при следующем запуске БД создаётся заново с теми же сидами.
 
+### Windows (PowerShell)
+
+**Установка одним скриптом (рекомендуется):**
+
+```powershell
+# Вариант 1: из PowerShell (pwsh 7+ или Windows PowerShell 5.1)
+iex (iwr https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/main/install.ps1).Content
+# → откроется интерактивное меню: 1) Установить / 2) Обновить / 3) Удалить
+```
+
+```powershell
+# Вариант 2: из клонированного репозитория
+.\install.ps1            # интерактивное меню
+.\install.ps1 install    # установить
+.\install.ps1 update     # обновить (git pull + пересборка)
+.\install.ps1 uninstall  # удалить
+```
+
+Установщик клонирует репозиторий, собирает release, создаёт ярлык «Negotiation Arena» в меню Пуске и на рабочем столе, добавляет команды `negotiation-arena` / `arena` в PATH и алиас `arena` в PowerShell профиль. Повторный запуск идемпотентен.
+
+После установки: ярлык поднимает сервер в фоне и открывает браузер на `http://localhost:3001/#/login` (повторный клик — только вкладка, второй экземпляр не поднимается). Остановка: `Stop-Process -Id (Get-Content $env:LOCALAPPDATA\negotiation-arena.pid)`, лог: `$env:LOCALAPPDATA\negotiation-arena.log`.
+
+Требуется [Rust](https://rustup.rs) stable и Python (для голоса/STT).
+
+**Вход в админку:** логин `admin`, пароль `admin123` (значение `ADMIN_PASSWORD`; задаётся только при первом запуске).
+
 **Вход в админку:** логин `admin`, пароль `admin123` (значение `ADMIN_PASSWORD`; задаётся только при первом запуске — сид создаёт пользователя один раз).
 
 Конфигурация (оба варианта) — переменные окружения: compose подхватывает `.env` автоматически, список переменных см. в [Конфигурация](#конфигурация) и [`.env.example`](.env.example).

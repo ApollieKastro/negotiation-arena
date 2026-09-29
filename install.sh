@@ -114,7 +114,7 @@ WRAP
 # Ярлык: поднимает сервер (если его ещё нет) и открывает браузер.
 # Повторный клик безопасен — второй экземпляр не поднимается.
 HEALTH_URL="http://localhost:3001/health"
-APP_URL="http://localhost:3001"
+APP_URL="http://localhost:3001/#/login"
 
 if ! curl -fsS --max-time 2 "$HEALTH_URL" >/dev/null 2>&1; then
     mkdir -p "$(dirname "@LOG_FILE@")"
