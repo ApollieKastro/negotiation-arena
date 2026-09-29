@@ -20,7 +20,7 @@
 |---|---|
 | **Docker** | `git clone ... && cd negotiation-arena && cp .env.example .env && docker compose up -d --build` |
 | **Linux / macOS** | `curl -fsSL https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/main/install.sh \| bash` |
-| **Windows (PowerShell)** | `iex (iwr https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/main/install.ps1).Content` |
+| **Windows (PowerShell)** | `iex (irm https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/main/install.ps1)` |
 
 После установки откройте **http://localhost:3001/#/login** — логин `admin` / пароль `admin123`.
 
@@ -107,7 +107,7 @@ cargo run
 
 ```powershell
 # Вариант 1: из PowerShell (pwsh 7+ или Windows PowerShell 5.1)
-iex (iwr https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/main/install.ps1).Content
+iex (irm https://raw.githubusercontent.com/ApollieKastro/negotiation-arena/main/install.ps1)
 # → откроется интерактивное меню: 1) Установить / 2) Обновить / 3) Удалить
 ```
 
