@@ -149,6 +149,26 @@ def stt_nemo_speech(model_path: str, audio_path: str, language: str | None) -> s
     return " ".join(t for t in texts if t).strip()
 
 
+def _patch_av_metadata_errors() -> None:
+    """PyAV 15+ убрал параметр `metadata_errors`, который faster-whisper передаёт
+    в `av.open()` (TypeError: open() got an unexpected keyword argument).
+    Прячем параметр, чтобы свежие версии av не ломали распознавание."""
+    try:
+        import av
+    except ImportError:
+        return
+    if getattr(av, "_arena_compat", False):
+        return
+    original_open = av.open
+
+    def open_compat(*args, **kwargs):  # type: ignore[no-untyped-def]
+        kwargs.pop("metadata_errors", None)
+        return original_open(*args, **kwargs)
+
+    av.open = open_compat  # type: ignore[assignment]
+    av._arena_compat = True
+
+
 def stt_faster_whisper(model_path: str, audio_path: str, language: str | None) -> str:
     try:
         from faster_whisper import WhisperModel
@@ -158,6 +178,7 @@ def stt_faster_whisper(model_path: str, audio_path: str, language: str | None) -
             "pip install -r scripts/requirements-voice.txt",
             3,
         )
+    _patch_av_metadata_errors()
 
     # Путь к каталогу/файлу весов — либо размер модели из имени (tiny/base/…).
     if os.path.isfile(model_path) or os.path.isdir(model_path):

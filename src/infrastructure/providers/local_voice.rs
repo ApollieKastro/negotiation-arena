@@ -79,6 +79,9 @@ async fn run_script(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
+    // PYTHONUTF8=1: stdout скриптов — всегда UTF-8, иначе на Windows с cp1251
+    // сервер читает кириллицу из STT как мусор (String::from_utf8_lossy).
+    cmd.env("PYTHONUTF8", "1");
 
     let mut child = cmd.spawn().map_err(|e| {
         AppError::ServiceUnavailable(format!("{label}: не удалось запустить python ({e})"))
